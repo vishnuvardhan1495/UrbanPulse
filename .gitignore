@@ -1,0 +1,75 @@
+# OS files
+desktop.ini
+Thumbs.db
+.DS_Store
+
+# Git backups
+**/.git_backup*
+
+# Node / Package managers
+**/node_modules/
+**/npm-debug.log*
+**/yarn-debug.log*
+**/yarn-error.log*
+**/.pnpm-debug.log*
+
+# Metro / Bundles
+**/*.jsbundle
+**/.metro-cache/
+**/.metro/
+
+# Java / Maven
+**/target/
+**/*.class
+**/*.jar
+**/*.war
+**/*.nar
+**/*.ear
+**/*.zip
+**/*.tar.gz
+**/*.rar
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar
+
+# Android / Gradle
+**/android/.gradle/
+**/.gradle/
+**/android/app/build/
+**/build/
+**/local.properties
+**/*.hprof
+**/*.cxx/
+**/android/.cxx/
+**/android/app/.cxx/
+**/*.keystore
+!**/debug.keystore
+**/*.jks
+.kotlin/
+
+# Web build
+**/dist/
+
+# Uploaded media (user-generated defect images)
+**/uploads/
+uploads/
+
+# IDE & Editor configs
+**/.idea/
+**/*.iml
+**/.vscode/
+**/.classpath
+**/.project
+**/.settings/
+
+# Firebase & Secret Files (NEVER COMMIT PRIVATE KEYS)
+**/*firebase*.json
+!**/google-services.json
+**/*service-account*.json
+**/*serviceAccount*.json
+**/*.key
+**/*.pem
+**/credentials.json
+**/serviceAccountKey.json
+**/.env
+**/.env.*
+**/*.env

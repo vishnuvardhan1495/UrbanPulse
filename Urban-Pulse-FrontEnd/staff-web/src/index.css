@@ -1,0 +1,92 @@
+:root {
+  --bg-dark: #0B1120;
+  --card-bg: rgba(30, 41, 59, 0.8);
+  --card-border: #334155;
+  --accent-cyan: #38BDF8;
+  --accent-blue: #0284C7;
+  --accent-green: #10B981;
+  --accent-purple: #A855F7;
+  --accent-amber: #F59E0B;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+body {
+  background-color: var(--bg-dark);
+  color: #F8FAFC;
+  min-height: 100vh;
+}
+
+.glass-card {
+  background: var(--card-bg);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+.gradient-title {
+  background: linear-gradient(135deg, #38BDF8 0%, #818CF8 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.badge-submitted { background: rgba(245, 158, 11, 0.15); color: #F59E0B; border: 1px solid rgba(245, 158, 11, 0.4); }
+.badge-forwarded { background: rgba(59, 130, 246, 0.15); color: #60A5FA; border: 1px solid rgba(59, 130, 246, 0.4); }
+.badge-assigned { background: rgba(168, 85, 247, 0.15); color: #C084FC; border: 1px solid rgba(168, 85, 247, 0.4); }
+.badge-in_progress { background: rgba(232, 121, 249, 0.15); color: #F0ABFC; border: 1px solid rgba(232, 121, 249, 0.4); }
+.badge-resolved { background: rgba(16, 185, 129, 0.15); color: #34D399; border: 1px solid rgba(16, 185, 129, 0.4); }
+
+.btn-primary {
+  background: linear-gradient(135deg, #0284C7 0%, #2563EB 100%);
+  color: white;
+  font-weight: 600;
+  padding: 10px 18px;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+.btn-success {
+  background: linear-gradient(135deg, #059669 0%, #10B981 100%);
+  color: white;
+  font-weight: 600;
+  padding: 10px 18px;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+}
+
+.input-field {
+  background-color: #0F172A;
+  border: 1px solid #475569;
+  color: #F8FAFC;
+  padding: 10px 14px;
+  border-radius: 8px;
+  outline: none;
+  font-size: 14px;
+}
+.input-field:focus { border-color: #38BDF8; }
+
+select.input-field option {
+  background-color: #0F172A;
+  color: #F8FAFC;
+}

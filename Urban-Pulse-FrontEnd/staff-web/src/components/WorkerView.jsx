@@ -1,6 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { getWorkerComplaints, updateWorkerStatus, uploadProofImage } from '../services/apiService';
 
+const isValidCoordinate = (lat, lng) => {
+  if (lat === null || lat === undefined || lng === null || lng === undefined) return false;
+  if (lat === '' || lng === '') return false;
+  const numLat = Number(lat);
+  const numLng = Number(lng);
+  if (Number.isNaN(numLat) || Number.isNaN(numLng)) return false;
+  if (numLat < -90 || numLat > 90) return false;
+  if (numLng < -180 || numLng > 180) return false;
+  return true;
+};
+
 export default function WorkerView({ idToken, user }) {
   const [complaints, setComplaints] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -141,7 +152,61 @@ export default function WorkerView({ idToken, user }) {
 
                 <div style={{ fontSize: '13px', color: '#CBD5E1', display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '16px' }}>
                   <div><strong>Issue:</strong> <span style={{ color: '#38BDF8' }}>{item.issueType}</span> (SLA: {item.slaHours}h)</div>
-                  <div><strong>Location:</strong> 📍 Lat {item.latitude}, Lng {item.longitude}</div>
+                  <div><strong>Location:</strong> 📍 Lat {item.latitude ?? 'N/A'}, Lng {item.longitude ?? 'N/A'}</div>
+                  {isValidCoordinate(item.latitude, item.longitude) ? (
+                    <a
+                      href={`https://www.google.com/maps?q=${item.latitude},${item.longitude}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        marginTop: '2px',
+                        marginBottom: '2px',
+                        padding: '6px 12px',
+                        fontSize: '12px',
+                        fontWeight: '600',
+                        color: '#38BDF8',
+                        backgroundColor: 'rgba(56, 189, 248, 0.1)',
+                        border: '1px solid rgba(56, 189, 248, 0.3)',
+                        borderRadius: '6px',
+                        textDecoration: 'none',
+                        width: 'fit-content',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = 'rgba(56, 189, 248, 0.2)';
+                        e.currentTarget.style.borderColor = '#38BDF8';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = 'rgba(56, 189, 248, 0.1)';
+                        e.currentTarget.style.borderColor = 'rgba(56, 189, 248, 0.3)';
+                      }}
+                    >
+                      📍 View on Google Maps
+                    </a>
+                  ) : (
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        marginTop: '2px',
+                        marginBottom: '2px',
+                        padding: '6px 12px',
+                        fontSize: '12px',
+                        color: '#94A3B8',
+                        backgroundColor: 'rgba(148, 163, 184, 0.1)',
+                        border: '1px solid rgba(148, 163, 184, 0.2)',
+                        borderRadius: '6px',
+                        width: 'fit-content',
+                      }}
+                    >
+                      Location unavailable
+                    </span>
+                  )}
                   <div><strong>Department:</strong> {item.departmentName}</div>
                   {item.slaDeadline && <div><strong>Deadline:</strong> {new Date(item.slaDeadline).toLocaleString()}</div>}
                   {item.resolvedAt && (

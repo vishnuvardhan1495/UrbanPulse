@@ -4,6 +4,7 @@ import {
   Alert,
   Image,
   KeyboardAvoidingView,
+  Linking,
   PermissionsAndroid,
   Platform,
   SafeAreaView,
@@ -1226,8 +1227,32 @@ export default function App() {
                           </Text>
                           <Text style={styles.detailLine}>
                             <Text style={styles.detailLabel}>Location: </Text>
-                            📍 Lat {item.latitude}, Lng {item.longitude}
+                            📍 Lat {item.latitude ?? 'N/A'}, Lng {item.longitude ?? 'N/A'}
                           </Text>
+                          {item.latitude !== null &&
+                          item.latitude !== undefined &&
+                          item.longitude !== null &&
+                          item.longitude !== undefined &&
+                          !isNaN(Number(item.latitude)) &&
+                          !isNaN(Number(item.longitude)) &&
+                          Number(item.latitude) >= -90 &&
+                          Number(item.latitude) <= 90 &&
+                          Number(item.longitude) >= -180 &&
+                          Number(item.longitude) <= 180 ? (
+                            <TouchableOpacity
+                              style={styles.workerMapsBtn}
+                              onPress={() =>
+                                Linking.openURL(
+                                  `https://www.google.com/maps?q=${item.latitude},${item.longitude}`,
+                                )
+                              }>
+                              <Text style={styles.workerMapsBtnText}>📍 View on Google Maps</Text>
+                            </TouchableOpacity>
+                          ) : (
+                            <View style={styles.workerLocationUnavailableBox}>
+                              <Text style={styles.workerLocationUnavailableText}>Location unavailable</Text>
+                            </View>
+                          )}
                           <Text style={styles.detailLine}>
                             <Text style={styles.detailLabel}>Submitted: </Text>
                             {new Date(item.createdAt).toLocaleString()}
@@ -2399,5 +2424,34 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#34D399',
     marginBottom: 6,
+  },
+  workerMapsBtn: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.3)',
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    marginVertical: 4,
+  },
+  workerMapsBtnText: {
+    color: '#38BDF8',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  workerLocationUnavailableBox: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(148, 163, 184, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.2)',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    marginVertical: 4,
+  },
+  workerLocationUnavailableText: {
+    color: '#94A3B8',
+    fontSize: 12,
   },
 });

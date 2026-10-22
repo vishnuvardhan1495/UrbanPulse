@@ -257,7 +257,10 @@ export default function SupervisorView({ idToken, user }) {
                   {/* Header: Complaint Number and Badges */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                     <span style={{ fontSize: '17px', fontWeight: '800', color: '#F8FAFC' }}>{item.complaintNumber}</span>
-                    <div style={{ display: 'flex', gap: '6px' }}>
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                      <span style={{ backgroundColor: 'rgba(56, 189, 248, 0.15)', border: '1px solid #38BDF8', color: '#38BDF8', fontSize: '11px', fontWeight: '700', padding: '2px 8px', borderRadius: '12px' }}>
+                        👥 {item.joinCount || 0} Joined
+                      </span>
                       <span className={`badge badge-${item.status.toLowerCase()}`}>{item.status}</span>
                       {getSlaBadge(item.slaStatus, item.remainingMinutes)}
                     </div>
@@ -326,6 +329,7 @@ export default function SupervisorView({ idToken, user }) {
                       )}
                     </div>
                     <div><strong>Created:</strong> {new Date(item.createdAt).toLocaleString()}</div>
+                    <div><strong>Citizens Joined:</strong> <span style={{ color: '#38BDF8', fontWeight: '700' }}>👥 {item.joinCount || 0} citizens participating</span></div>
                     {item.slaDeadline && <div><strong>SLA Deadline:</strong> {new Date(item.slaDeadline).toLocaleString()}</div>}
 
                     {/* Resolution Metadata Banner */}

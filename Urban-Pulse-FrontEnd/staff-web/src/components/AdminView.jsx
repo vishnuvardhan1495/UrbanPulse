@@ -371,6 +371,9 @@ export default function AdminView({ idToken, user }) {
                     <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                       <span className={`badge badge-${item.status.toLowerCase()}`}>{item.status}</span>
                       {getSlaBadge(item.slaStatus, item.remainingMinutes)}
+                      <span style={{ backgroundColor: 'rgba(245, 158, 11, 0.15)', border: '1px solid #F59E0B', color: '#FBBF24', fontSize: '11px', fontWeight: '700', padding: '2px 8px', borderRadius: '12px' }}>
+                        👥 {item.joinCount || 0} Joined
+                      </span>
                     </div>
                   </div>
 
@@ -406,6 +409,7 @@ export default function AdminView({ idToken, user }) {
                     <div><strong>Supervisor:</strong> {item.supervisorName ? `${item.supervisorName} (${item.supervisorMobile})` : <span style={{ color: '#94A3B8' }}>None</span>}</div>
                     <div><strong>Worker:</strong> {item.assignedWorkerName ? `${item.assignedWorkerName} (${item.assignedWorkerMobile})` : <span style={{ color: '#94A3B8' }}>None</span>}</div>
                     <div><strong>Location:</strong> 📍 Lat {item.latitude}, Lng {item.longitude}</div>
+                    <div><strong>Citizens Joined:</strong> <span style={{ color: '#FBBF24', fontWeight: '700' }}>👥 {item.joinCount || 0} citizens participating</span></div>
                     {item.slaDeadline && <div><strong>Deadline:</strong> {new Date(item.slaDeadline).toLocaleString()}</div>}
                   </div>
 

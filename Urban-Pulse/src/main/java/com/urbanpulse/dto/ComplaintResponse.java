@@ -50,4 +50,10 @@ public class ComplaintResponse {
     private String assignedWorkerName;
 
     private List<StatusHistoryResponse> statusHistory;
+
+    // Joined complaint participant data
+    private Long joinCount;
+    private Boolean hasJoined;
+    private Boolean isOriginalReporter;
+    private Double distanceMeters;
 }

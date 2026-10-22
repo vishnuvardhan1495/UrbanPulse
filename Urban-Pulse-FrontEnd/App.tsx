@@ -5,6 +5,7 @@ import {
   Image,
   KeyboardAvoidingView,
   Linking,
+  Modal,
   PermissionsAndroid,
   Platform,
   SafeAreaView,
@@ -45,8 +46,13 @@ import {
   getWorkerComplaints,
   updateWorkerStatus,
   uploadWorkerProofImage,
+  checkDuplicateComplaints,
+  joinComplaint,
+  getJoinedComplaints,
   ComplaintData,
   CreateComplaintPayload,
+  DuplicateComplaintSummary,
+  JoinComplaintResponse,
 } from './src/services/complaintService';
 
 type AuthStep = 'PHONE' | 'OTP' | 'SUCCESS';
@@ -82,6 +88,17 @@ export default function App() {
   const [issueType, setIssueType] = useState<string>('POTHOLE');
   const [submitting, setSubmitting] = useState(false);
   const [lastSubmittedComplaint, setLastSubmittedComplaint] = useState<ComplaintData | null>(null);
+
+  // Duplicate Detection & Join State
+  const [checkingDuplicates, setCheckingDuplicates] = useState(false);
+  const [similarComplaints, setSimilarComplaints] = useState<DuplicateComplaintSummary[]>([]);
+  const [pendingPayload, setPendingPayload] = useState<CreateComplaintPayload | null>(null);
+  const [viewingSimilarDetailsId, setViewingSimilarDetailsId] = useState<number | null>(null);
+  const [joiningComplaintId, setJoiningComplaintId] = useState<number | null>(null);
+  const [confirmJoinItem, setConfirmJoinItem] = useState<DuplicateComplaintSummary | null>(null);
+  const [joinedSuccessComplaint, setJoinedSuccessComplaint] = useState<JoinComplaintResponse | null>(null);
+  const [complaintFilter, setComplaintFilter] = useState<'ALL' | 'MINE' | 'JOINED'>('ALL');
+  const [joinedComplaintsList, setJoinedComplaintsList] = useState<ComplaintData[]>([]);
 
   // My Complaints State
   const [complaintsList, setComplaintsList] = useState<ComplaintData[]>([]);
@@ -282,6 +299,14 @@ export default function App() {
     setWorkerRemarks({});
     setWorkerSuccessMessage(null);
     setWorkerActionLoading({});
+    setSimilarComplaints([]);
+    setPendingPayload(null);
+    setViewingSimilarDetailsId(null);
+    setJoiningComplaintId(null);
+    setConfirmJoinItem(null);
+    setJoinedSuccessComplaint(null);
+    setJoinedComplaintsList([]);
+    setComplaintFilter('ALL');
     setStep('PHONE');
   };
 
@@ -449,8 +474,12 @@ export default function App() {
 
     setLoadingComplaints(true);
     try {
-      const list = await getMyComplaints(activeToken);
+      const [list, joined] = await Promise.all([
+        getMyComplaints(activeToken),
+        getJoinedComplaints(activeToken).catch(() => []),
+      ]);
       setComplaintsList(list);
+      setJoinedComplaintsList(joined);
     } catch (err: any) {
       console.warn('Failed to load complaints:', err?.message);
     } finally {
@@ -715,7 +744,29 @@ export default function App() {
         severity: 'MEDIUM',
       };
 
-      console.log('[COMPLAINT] Creating complaint with safe payload:', {
+      // Step 2: Check for potential duplicate complaints within 30 meters
+      console.log('[COMPLAINT] Checking for duplicate complaints within 30m radius...');
+      setCheckingDuplicates(true);
+
+      const duplicateCheck = await checkDuplicateComplaints(firebaseIdToken, {
+        issueType: payload.issueType || 'POTHOLE',
+        latitude: payload.latitude,
+        longitude: payload.longitude,
+        imageUrl: payload.imageUrl,
+        radiusMeters: 30.0,
+      });
+
+      setCheckingDuplicates(false);
+
+      if (duplicateCheck.duplicateFound && duplicateCheck.matches && duplicateCheck.matches.length > 0) {
+        console.log(`[COMPLAINT] Found ${duplicateCheck.matches.length} matching complaints nearby.`);
+        setPendingPayload(payload);
+        setSimilarComplaints(duplicateCheck.matches);
+        return;
+      }
+
+      // Step 3: No duplicate found - proceed directly to normal creation
+      console.log('[COMPLAINT] No duplicate found. Creating complaint with safe payload:', {
         issueType: payload.issueType,
         latitude: payload.latitude,
         longitude: payload.longitude,
@@ -729,6 +780,8 @@ export default function App() {
       setPhotoConfirmed(false);
       setGpsLocation(null);
       setGpsError(null);
+      setPendingPayload(null);
+      setSimilarComplaints([]);
       fetchCitizenComplaints(firebaseIdToken);
     } catch (err: any) {
       console.error('[COMPLAINT SUBMISSION] Error:', err);
@@ -747,6 +800,72 @@ export default function App() {
       setErrorMessage(userFriendlyError);
     } finally {
       setSubmitting(false);
+      setCheckingDuplicates(false);
+    }
+  };
+
+  /**
+   * Called when citizen confirms that existing similar complaints do NOT describe their issue,
+   * so they register a separate complaint.
+   */
+  const handleProceedWithNewComplaint = async () => {
+    if (!firebaseIdToken || !pendingPayload) {
+      setErrorMessage('Missing complaint data. Please retry report.');
+      return;
+    }
+
+    setSubmitting(true);
+    setErrorMessage(null);
+
+    try {
+      console.log('[COMPLAINT] Citizen confirmed separate issue. Creating new complaint...');
+      const result = await createComplaint(firebaseIdToken, pendingPayload);
+      setLastSubmittedComplaint(result);
+      setCapturedPhotoUri(null);
+      setPhotoConfirmed(false);
+      setGpsLocation(null);
+      setGpsError(null);
+      setPendingPayload(null);
+      setSimilarComplaints([]);
+      fetchCitizenComplaints(firebaseIdToken);
+    } catch (err: any) {
+      console.error('[COMPLAINT] Separate creation failed:', err);
+      setErrorMessage(err?.message || 'Failed to register separate complaint.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /**
+   * Called when citizen confirms joining an existing complaint.
+   * Links citizen in complaint_participants without creating duplicate complaint or assignment.
+   */
+  const handleConfirmJoin = async (complaintId: number) => {
+    if (!firebaseIdToken) {
+      setErrorMessage('Authentication session expired. Please re-login.');
+      return;
+    }
+
+    setJoiningComplaintId(complaintId);
+    setErrorMessage(null);
+
+    try {
+      console.log(`[COMPLAINT] Citizen joining existing complaint ID: ${complaintId}`);
+      const result = await joinComplaint(firebaseIdToken, complaintId);
+      setJoinedSuccessComplaint(result);
+      setConfirmJoinItem(null);
+      setSimilarComplaints([]);
+      setPendingPayload(null);
+      setCapturedPhotoUri(null);
+      setPhotoConfirmed(false);
+      setGpsLocation(null);
+      setGpsError(null);
+      fetchCitizenComplaints(firebaseIdToken);
+    } catch (err: any) {
+      console.error('[COMPLAINT] Join failed:', err);
+      setErrorMessage(err?.message || 'Failed to join complaint.');
+    } finally {
+      setJoiningComplaintId(null);
     }
   };
 
@@ -784,38 +903,244 @@ export default function App() {
     }
   };
 
-  const renderReportForm = () => (
-    lastSubmittedComplaint ? (
-      <View style={styles.successCard}>
-        <Text style={styles.successCheckIcon}>✓</Text>
-        <Text style={styles.successCardTitle}>Complaint Submitted Successfully!</Text>
-        <Text style={styles.complaintNumBox}>
-          Complaint #: {lastSubmittedComplaint.complaintNumber}
-        </Text>
-        <Text style={styles.successDesc}>
-          Your issue has been logged in PostgreSQL with status{' '}
-          <Text style={{ color: '#F59E0B', fontWeight: '700' }}>SUBMITTED</Text>. SLA deadline is{' '}
-          {lastSubmittedComplaint.slaDeadline ? new Date(lastSubmittedComplaint.slaDeadline).toLocaleString() : 'set'}.
-        </Text>
+  const renderReportForm = () => {
+    if (joinedSuccessComplaint) {
+      return (
+        <View style={styles.successCard}>
+          <Text style={styles.successCheckIcon}>🤝</Text>
+          <Text style={styles.successCardTitle}>Joined Complaint Successfully!</Text>
+          <Text style={styles.complaintNumBox}>
+            Complaint #: {joinedSuccessComplaint.complaintNumber}
+          </Text>
+          <Text style={styles.successDesc}>
+            {joinedSuccessComplaint.message || 'You have been linked to this existing civic complaint.'}
+          </Text>
 
-        <TouchableOpacity
-          style={styles.primaryButton}
-          onPress={() => {
-            setLastSubmittedComplaint(null);
-            if (backendUser?.role === 'WORKER') {
-              setWorkerActiveTab('ASSIGNED_TASKS');
-              fetchWorkerAssignedComplaints();
-            } else {
+          <View style={styles.joinedStatsBox}>
+            <Text style={styles.joinedStatsNumber}>👥 {joinedSuccessComplaint.joinCount}</Text>
+            <Text style={styles.joinedStatsLabel}>Total Citizens Participating</Text>
+          </View>
+
+          <TouchableOpacity
+            style={styles.primaryButton}
+            onPress={() => {
+              setJoinedSuccessComplaint(null);
               setActiveTab('MY_COMPLAINTS');
               fetchCitizenComplaints();
-            }
-          }}>
-          <Text style={styles.primaryButtonText}>
-            {backendUser?.role === 'WORKER' ? 'View My Assigned Tasks' : 'View My Complaints'}
+            }}>
+            <Text style={styles.primaryButtonText}>View in My Complaints</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.secondaryButton, { marginTop: 10 }]}
+            onPress={() => {
+              setJoinedSuccessComplaint(null);
+              setActiveTab('REPORT');
+            }}>
+            <Text style={styles.secondaryButtonText}>Report Another Issue</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+
+    if (similarComplaints.length > 0) {
+      return (
+        <View style={styles.similarContainer}>
+          <View style={styles.similarHeaderBanner}>
+            <Text style={styles.similarBannerIcon}>🔍</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.similarBannerTitle}>Similar Complaints Found</Text>
+              <Text style={styles.similarBannerSub}>
+                We detected {similarComplaints.length} existing civic complaint{similarComplaints.length > 1 ? 's' : ''} reported within 30m matching this issue category ({issueType}).
+              </Text>
+            </View>
+          </View>
+
+          <Text style={styles.similarInstructionText}>
+            Inspect the reports below. If your issue is already listed, tap <Text style={{ fontWeight: '700', color: '#38BDF8' }}>Join Complaint</Text> to follow its resolution without filing a duplicate ticket.
           </Text>
-        </TouchableOpacity>
-      </View>
-    ) : (
+
+          {similarComplaints.map((item) => {
+            const badgeStyle = getStatusBadgeStyle(item.status);
+            const isInspecting = viewingSimilarDetailsId === item.id;
+            const isJoining = joiningComplaintId === item.id;
+
+            return (
+              <View key={item.id} style={styles.similarCard}>
+                <View style={styles.similarCardHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.similarComplaintNumber}>{item.complaintNumber}</Text>
+                    <Text style={styles.similarDistanceBadge}>
+                      📍 {item.distanceMeters.toFixed(1)}m away from your location
+                    </Text>
+                  </View>
+                  <View style={[styles.statusBadge, { backgroundColor: badgeStyle.bg, borderColor: badgeStyle.border }]}>
+                    <Text style={[styles.statusBadgeText, { color: badgeStyle.text }]}>{item.status}</Text>
+                  </View>
+                </View>
+
+                {item.imageUrl ? (
+                  <View style={styles.similarImageContainer}>
+                    <Image
+                      source={{
+                        uri: item.imageUrl.startsWith('/') ? `${API_BASE_URL}${item.imageUrl}` : item.imageUrl,
+                      }}
+                      style={styles.similarImage}
+                    />
+                  </View>
+                ) : null}
+
+                <View style={styles.similarMetaBox}>
+                  <View style={styles.similarMetaRow}>
+                    <Text style={styles.similarMetaLabel}>Issue Category:</Text>
+                    <Text style={{ color: '#38BDF8', fontWeight: '700' }}>{item.issueType}</Text>
+                  </View>
+                  <View style={styles.similarMetaRow}>
+                    <Text style={styles.similarMetaLabel}>Citizens Joined:</Text>
+                    <Text style={{ color: '#FBBF24', fontWeight: '800' }}>👥 {item.joinCount || 0} Citizens</Text>
+                  </View>
+                  <View style={styles.similarMetaRow}>
+                    <Text style={styles.similarMetaLabel}>Reported Date:</Text>
+                    <Text style={{ color: '#CBD5E1' }}>
+                      {new Date(item.createdAt).toLocaleDateString()} {new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </Text>
+                  </View>
+                  {item.departmentName ? (
+                    <View style={styles.similarMetaRow}>
+                      <Text style={styles.similarMetaLabel}>Department:</Text>
+                      <Text style={{ color: '#CBD5E1' }}>{item.departmentName}</Text>
+                    </View>
+                  ) : null}
+                </View>
+
+                {item.status === 'RESOLVED' && (
+                  <View style={styles.similarResolvedNotice}>
+                    <Text style={{ color: '#34D399', fontWeight: '700', fontSize: 13 }}>
+                      ℹ️ This complaint is marked RESOLVED.
+                    </Text>
+                    <Text style={{ color: '#94A3B8', fontSize: 12, marginTop: 2 }}>
+                      If the issue has reoccurred or remains broken, you can inspect details or register a separate complaint below.
+                    </Text>
+                  </View>
+                )}
+
+                <View style={styles.similarActionRow}>
+                  <TouchableOpacity
+                    style={styles.similarDetailsBtn}
+                    onPress={() => setViewingSimilarDetailsId(isInspecting ? null : item.id)}>
+                    <Text style={styles.similarDetailsBtnText}>
+                      {isInspecting ? '▲ Hide Details' : '👁️ View Details'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {item.hasJoined ? (
+                    <View style={styles.alreadyJoinedBadge}>
+                      <Text style={styles.alreadyJoinedText}>
+                        {item.isOriginalReporter ? '★ Your Report' : '✓ Already Joined'}
+                      </Text>
+                    </View>
+                  ) : item.status === 'RESOLVED' ? (
+                    <View style={[styles.alreadyJoinedBadge, { backgroundColor: 'rgba(16, 185, 129, 0.15)', borderColor: '#10B981' }]}>
+                      <Text style={[styles.alreadyJoinedText, { color: '#34D399' }]}>
+                        ✓ Previously Resolved
+                      </Text>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      style={[styles.similarJoinBtn, isJoining && styles.buttonDisabled]}
+                      disabled={isJoining}
+                      onPress={() => setConfirmJoinItem(item)}>
+                      {isJoining ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <Text style={styles.similarJoinBtnText}>🤝 Join Complaint</Text>
+                      )}
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {isInspecting && (
+                  <View style={styles.similarExpandedBox}>
+                    <Text style={styles.similarExpandedTitle}>Technical & Lifecycle Details</Text>
+                    <Text style={styles.similarExpandedText}>📍 Coordinates: Lat {item.latitude}, Lng {item.longitude}</Text>
+                    {item.slaDeadline && (
+                      <Text style={styles.similarExpandedText}>⏰ SLA Deadline: {new Date(item.slaDeadline).toLocaleString()}</Text>
+                    )}
+                    {item.proofImageUrl && (
+                      <View style={{ marginTop: 8 }}>
+                        <Text style={{ color: '#34D399', fontSize: 12, fontWeight: '700', marginBottom: 4 }}>Resolution Proof Photo:</Text>
+                        <Image
+                          source={{ uri: item.proofImageUrl.startsWith('/') ? `${API_BASE_URL}${item.proofImageUrl}` : item.proofImageUrl }}
+                          style={{ height: 140, borderRadius: 6, backgroundColor: '#0F172A' }}
+                        />
+                      </View>
+                    )}
+                  </View>
+                )}
+              </View>
+            );
+          })}
+
+          <TouchableOpacity
+            style={styles.noneOfTheseBtn}
+            onPress={handleProceedWithNewComplaint}
+            disabled={submitting}>
+            {submitting ? (
+              <ActivityIndicator color="#FFFFFF" size="small" />
+            ) : (
+              <Text style={styles.noneOfTheseBtnText}>
+                ➕ None of These – Register New Complaint
+              </Text>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.cancelCheckBtn}
+            onPress={() => {
+              setSimilarComplaints([]);
+              setPendingPayload(null);
+            }}>
+            <Text style={styles.cancelCheckBtnText}>← Go Back to Edit Report</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+
+    if (lastSubmittedComplaint) {
+      return (
+        <View style={styles.successCard}>
+          <Text style={styles.successCheckIcon}>✓</Text>
+          <Text style={styles.successCardTitle}>Complaint Submitted Successfully!</Text>
+          <Text style={styles.complaintNumBox}>
+            Complaint #: {lastSubmittedComplaint.complaintNumber}
+          </Text>
+          <Text style={styles.successDesc}>
+            Your issue has been logged in PostgreSQL with status{' '}
+            <Text style={{ color: '#F59E0B', fontWeight: '700' }}>SUBMITTED</Text>. SLA deadline is{' '}
+            {lastSubmittedComplaint.slaDeadline ? new Date(lastSubmittedComplaint.slaDeadline).toLocaleString() : 'set'}.
+          </Text>
+
+          <TouchableOpacity
+            style={styles.primaryButton}
+            onPress={() => {
+              setLastSubmittedComplaint(null);
+              if (backendUser?.role === 'WORKER') {
+                setWorkerActiveTab('ASSIGNED_TASKS');
+                fetchWorkerAssignedComplaints();
+              } else {
+                setActiveTab('MY_COMPLAINTS');
+                fetchCitizenComplaints();
+              }
+            }}>
+            <Text style={styles.primaryButtonText}>
+              {backendUser?.role === 'WORKER' ? 'View My Assigned Tasks' : 'View My Complaints'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+
+    return (
       <View style={styles.formCard}>
         <Text style={styles.cardHeaderTitle}>Report Civic Issue</Text>
         <Text style={styles.cardHeaderSub}>
@@ -936,7 +1261,7 @@ export default function App() {
         )}
 
         {/* Disabled reason notice when not ready */}
-        {!isSubmitReady && !submitting && (
+        {!isSubmitReady && !submitting && !checkingDuplicates && (
           <View style={styles.submitNoticeBox}>
             <Text style={styles.submitNoticeText}>
               ℹ️ {getSubmitDisabledReason()}
@@ -948,15 +1273,17 @@ export default function App() {
         <TouchableOpacity
           style={[
             styles.submitButton,
-            !isSubmitReady && styles.submitButtonDisabled,
+            (!isSubmitReady || submitting || checkingDuplicates) && styles.submitButtonDisabled,
           ]}
           onPress={handleSubmitComplaint}
-          disabled={!isSubmitReady}
+          disabled={!isSubmitReady || submitting || checkingDuplicates}
           activeOpacity={0.8}>
-          {submitting ? (
+          {submitting || checkingDuplicates ? (
             <View style={styles.submittingRow}>
               <ActivityIndicator color="#FFFFFF" size="small" />
-              <Text style={styles.submitButtonText}>SUBMITTING COMPLAINT...</Text>
+              <Text style={styles.submitButtonText}>
+                {checkingDuplicates ? 'CHECKING SIMILAR COMPLAINTS...' : 'SUBMITTING COMPLAINT...'}
+              </Text>
             </View>
           ) : (
             <Text
@@ -969,8 +1296,8 @@ export default function App() {
           )}
         </TouchableOpacity>
       </View>
-    )
-  );
+    );
+  };
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -1226,6 +1553,10 @@ export default function App() {
                             {item.departmentName || 'Assigned Department'}
                           </Text>
                           <Text style={styles.detailLine}>
+                            <Text style={styles.detailLabel}>Citizens Affected: </Text>
+                            <Text style={{ color: '#FBBF24', fontWeight: '800' }}>👥 {item.joinCount || 0} Citizens Joined</Text>
+                          </Text>
+                          <Text style={styles.detailLine}>
                             <Text style={styles.detailLabel}>Location: </Text>
                             📍 Lat {item.latitude ?? 'N/A'}, Lng {item.longitude ?? 'N/A'}
                           </Text>
@@ -1459,7 +1790,7 @@ export default function App() {
                   fetchCitizenComplaints();
                 }}>
                 <Text style={[styles.tabBtnText, activeTab === 'MY_COMPLAINTS' && styles.tabBtnTextActive]}>
-                  📋 My Complaints ({complaintsList.length})
+                  📋 My Complaints ({complaintsList.length + joinedComplaintsList.length})
                 </Text>
               </TouchableOpacity>
             </View>
@@ -1482,7 +1813,7 @@ export default function App() {
                 contentContainerStyle={styles.tabScrollContent}
                 showsVerticalScrollIndicator={true}>
                 <View style={styles.listHeaderRow}>
-                  <Text style={styles.listHeaderTitle}>My Submitted Complaints</Text>
+                  <Text style={styles.listHeaderTitle}>My Complaints & Joined Issues</Text>
                   <TouchableOpacity
                     style={styles.refreshBtn}
                     onPress={() => fetchCitizenComplaints()}>
@@ -1490,147 +1821,247 @@ export default function App() {
                   </TouchableOpacity>
                 </View>
 
+                {/* Filter Segments */}
+                <View style={styles.complaintFilterRow}>
+                  <TouchableOpacity
+                    style={[styles.filterChip, complaintFilter === 'ALL' && styles.filterChipActive]}
+                    onPress={() => setComplaintFilter('ALL')}>
+                    <Text style={[styles.filterChipText, complaintFilter === 'ALL' && styles.filterChipTextActive]}>
+                      All ({complaintsList.length + joinedComplaintsList.length})
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.filterChip, complaintFilter === 'MINE' && styles.filterChipActive]}
+                    onPress={() => setComplaintFilter('MINE')}>
+                    <Text style={[styles.filterChipText, complaintFilter === 'MINE' && styles.filterChipTextActive]}>
+                      Reported by Me ({complaintsList.length})
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.filterChip, complaintFilter === 'JOINED' && styles.filterChipActive]}
+                    onPress={() => setComplaintFilter('JOINED')}>
+                    <Text style={[styles.filterChipText, complaintFilter === 'JOINED' && styles.filterChipTextActive]}>
+                      Joined by Me ({joinedComplaintsList.length})
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
                 {loadingComplaints ? (
                   <View style={{ padding: 40, alignItems: 'center' }}>
                     <ActivityIndicator size="large" color="#38BDF8" />
-                    <Text style={{ color: '#94A3B8', marginTop: 12 }}>Loading your complaints...</Text>
-                  </View>
-                ) : complaintsList.length === 0 ? (
-                  <View style={styles.emptyCard}>
-                    <Text style={styles.emptyIcon}>📭</Text>
-                    <Text style={styles.emptyTitle}>No Complaints Yet</Text>
-                    <Text style={styles.emptySub}>
-                      You haven't submitted any civic complaints yet. Tap "Report Issue" above to submit one.
-                    </Text>
+                    <Text style={{ color: '#94A3B8', marginTop: 12 }}>Loading complaints...</Text>
                   </View>
                 ) : (
-                  complaintsList.map((item) => {
-                    const badgeStyle = getStatusBadgeStyle(item.status);
-                    const slaBadge = getSlaBadgeText(item);
-                    const isExpanded = expandedHistoryId === item.id;
+                  (() => {
+                    const displayedComplaints =
+                      complaintFilter === 'MINE'
+                        ? complaintsList
+                        : complaintFilter === 'JOINED'
+                        ? joinedComplaintsList
+                        : [...complaintsList, ...joinedComplaintsList.filter((j) => !complaintsList.some((m) => m.id === j.id))];
 
-                    return (
-                      <View key={item.id} style={styles.complaintCard}>
-                        {/* Header */}
-                        <View style={styles.complaintCardHeader}>
-                          <Text style={styles.complaintNumber}>{item.complaintNumber}</Text>
-                          <View style={{ flexDirection: 'row', gap: 6 }}>
-                            <View
-                              style={[
-                                styles.statusBadge,
-                                { backgroundColor: badgeStyle.bg, borderColor: badgeStyle.border },
-                              ]}>
-                              <Text style={[styles.statusBadgeText, { color: badgeStyle.text }]}>
-                                {item.status}
-                              </Text>
+                    if (displayedComplaints.length === 0) {
+                      return (
+                        <View style={styles.emptyCard}>
+                          <Text style={styles.emptyIcon}>📭</Text>
+                          <Text style={styles.emptyTitle}>
+                            {complaintFilter === 'JOINED'
+                              ? 'No Joined Complaints'
+                              : complaintFilter === 'MINE'
+                              ? 'No Reported Complaints'
+                              : 'No Complaints Found'}
+                          </Text>
+                          <Text style={styles.emptySub}>
+                            {complaintFilter === 'JOINED'
+                              ? 'You have not joined any existing civic complaints yet.'
+                              : 'You have not submitted any complaints yet. Tap "Report Issue" above to submit one.'}
+                          </Text>
+                        </View>
+                      );
+                    }
+
+                    return displayedComplaints.map((item) => {
+                      const badgeStyle = getStatusBadgeStyle(item.status);
+                      const slaBadge = getSlaBadgeText(item);
+                      const isExpanded = expandedHistoryId === item.id;
+                      const isJoinedItem = item.hasJoined && !item.isOriginalReporter;
+
+                      return (
+                        <View key={item.id} style={styles.complaintCard}>
+                          {/* Header */}
+                          <View style={styles.complaintCardHeader}>
+                            <View>
+                              <Text style={styles.complaintNumber}>{item.complaintNumber}</Text>
+                              <View style={isJoinedItem ? styles.originBadgeJoined : styles.originBadgeReporter}>
+                                <Text style={styles.originBadgeText}>
+                                  {isJoinedItem ? '🤝 Joined by You' : '📝 Original Reporter'}
+                                </Text>
+                              </View>
                             </View>
-                            <View
-                              style={[
-                                styles.statusBadge,
-                                { backgroundColor: slaBadge.bg, borderColor: slaBadge.color },
-                              ]}>
-                              <Text style={[styles.statusBadgeText, { color: slaBadge.color }]}>
-                                {slaBadge.text}
-                              </Text>
+                            <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+                              <View
+                                style={[
+                                  styles.statusBadge,
+                                  { backgroundColor: badgeStyle.bg, borderColor: badgeStyle.border },
+                                ]}>
+                                <Text style={[styles.statusBadgeText, { color: badgeStyle.text }]}>
+                                  {item.status}
+                                </Text>
+                              </View>
+                              <View
+                                style={[
+                                  styles.statusBadge,
+                                  { backgroundColor: slaBadge.bg, borderColor: slaBadge.color },
+                                ]}>
+                                <Text style={[styles.statusBadgeText, { color: slaBadge.color }]}>
+                                  {slaBadge.text}
+                                </Text>
+                              </View>
                             </View>
                           </View>
-                        </View>
 
-                        {/* Complaint Image */}
-                        {item.imageUrl ? (
-                          <View style={styles.cardImageContainer}>
-                            <Image
-                              source={{
-                                uri: item.imageUrl.startsWith('/')
-                                  ? `${API_BASE_URL}${item.imageUrl}`
-                                  : item.imageUrl,
-                              }}
-                              style={styles.cardImage}
-                            />
-                          </View>
-                        ) : null}
-
-                        {/* Details */}
-                        <View style={styles.cardDetailsBox}>
-                          <Text style={styles.detailLine}>
-                            <Text style={styles.detailLabel}>Issue: </Text>
-                            <Text style={{ color: '#38BDF8', fontWeight: '700' }}>{item.issueType}</Text>
-                          </Text>
-                          <Text style={styles.detailLine}>
-                            <Text style={styles.detailLabel}>Department: </Text>
-                            {item.departmentName || 'Awaiting Admin Routing'}
-                          </Text>
-                          <Text style={styles.detailLine}>
-                            <Text style={styles.detailLabel}>Location: </Text>
-                            📍 Lat {item.latitude}, Lng {item.longitude}
-                          </Text>
-                          <Text style={styles.detailLine}>
-                            <Text style={styles.detailLabel}>Submitted: </Text>
-                            {new Date(item.createdAt).toLocaleString()}
-                          </Text>
-                          {item.slaDeadline && (
-                            <Text style={styles.detailLine}>
-                              <Text style={styles.detailLabel}>SLA Deadline: </Text>
-                              {new Date(item.slaDeadline).toLocaleString()}
-                            </Text>
-                          )}
-                        </View>
-
-                        {/* Resolution Proof Card if Resolved */}
-                        {item.status === 'RESOLVED' && (
-                          <View style={styles.resolvedProofBox}>
-                            <Text style={styles.resolvedProofTitle}>
-                              🎉 Issue Resolved {item.resolvedWithinSla ? '(Within SLA)' : '(Overdue)'}
-                            </Text>
-                            {item.proofImageUrl ? (
+                          {/* Complaint Image */}
+                          {item.imageUrl ? (
+                            <View style={styles.cardImageContainer}>
                               <Image
                                 source={{
-                                  uri: item.proofImageUrl.startsWith('/')
-                                    ? `${API_BASE_URL}${item.proofImageUrl}`
-                                    : item.proofImageUrl,
+                                  uri: item.imageUrl.startsWith('/')
+                                    ? `${API_BASE_URL}${item.imageUrl}`
+                                    : item.imageUrl,
                                 }}
-                                style={styles.proofImageThumb}
+                                style={styles.cardImage}
                               />
-                            ) : null}
+                            </View>
+                          ) : null}
+
+                          {/* Details */}
+                          <View style={styles.cardDetailsBox}>
+                            <View style={styles.communityImpactBanner}>
+                              <Text style={styles.communityImpactText}>
+                                👥 <Text style={{ fontWeight: '800', color: '#FBBF24' }}>{item.joinCount || 0} Citizen{item.joinCount === 1 ? '' : 's'}</Text> Participating
+                              </Text>
+                            </View>
+
+                            <Text style={styles.detailLine}>
+                              <Text style={styles.detailLabel}>Issue: </Text>
+                              <Text style={{ color: '#38BDF8', fontWeight: '700' }}>{item.issueType}</Text>
+                            </Text>
+                            <Text style={styles.detailLine}>
+                              <Text style={styles.detailLabel}>Department: </Text>
+                              {item.departmentName || 'Awaiting Admin Routing'}
+                            </Text>
+                            <Text style={styles.detailLine}>
+                              <Text style={styles.detailLabel}>Location: </Text>
+                              📍 Lat {item.latitude}, Lng {item.longitude}
+                            </Text>
+                            <Text style={styles.detailLine}>
+                              <Text style={styles.detailLabel}>Submitted: </Text>
+                              {new Date(item.createdAt).toLocaleString()}
+                            </Text>
+                            {item.slaDeadline && (
+                              <Text style={styles.detailLine}>
+                                <Text style={styles.detailLabel}>SLA Deadline: </Text>
+                                {new Date(item.slaDeadline).toLocaleString()}
+                              </Text>
+                            )}
                           </View>
-                        )}
 
-                        {/* Expandable Status History */}
-                        <TouchableOpacity
-                          style={styles.toggleHistoryBtn}
-                          onPress={() => setExpandedHistoryId(isExpanded ? null : item.id)}>
-                          <Text style={styles.toggleHistoryText}>
-                            {isExpanded ? '▲ Hide Timeline' : `▼ View Lifecycle Timeline (${item.statusHistory?.length || 0})`}
-                          </Text>
-                        </TouchableOpacity>
+                          {/* Resolution Proof Card if Resolved */}
+                          {item.status === 'RESOLVED' && (
+                            <View style={styles.resolvedProofBox}>
+                              <Text style={styles.resolvedProofTitle}>
+                                🎉 Issue Resolved {item.resolvedWithinSla ? '(Within SLA)' : '(Overdue)'}
+                              </Text>
+                              {item.proofImageUrl ? (
+                                <Image
+                                  source={{
+                                    uri: item.proofImageUrl.startsWith('/')
+                                      ? `${API_BASE_URL}${item.proofImageUrl}`
+                                      : item.proofImageUrl,
+                                  }}
+                                  style={styles.proofImageThumb}
+                                />
+                              ) : null}
+                            </View>
+                          )}
 
-                        {isExpanded && item.statusHistory && (
-                          <View style={styles.historyContainer}>
-                            {item.statusHistory.map((h, idx) => (
-                              <View key={h.id || idx} style={styles.historyItem}>
-                                <View style={styles.historyDot} />
-                                <View style={styles.historyContent}>
-                                  <Text style={styles.historyStatusText}>
-                                    {h.oldStatus ? `${h.oldStatus} ➔ ${h.newStatus}` : h.newStatus}
-                                  </Text>
-                                  <Text style={styles.historyMetaText}>
-                                    {h.changedByName || h.changedByMobile || 'System'} • {new Date(h.changedAt).toLocaleString()}
-                                  </Text>
-                                  {h.remarks ? (
-                                    <Text style={styles.historyRemarksText}>"{h.remarks}"</Text>
-                                  ) : null}
+                          {/* Expandable Status History */}
+                          <TouchableOpacity
+                            style={styles.toggleHistoryBtn}
+                            onPress={() => setExpandedHistoryId(isExpanded ? null : item.id)}>
+                            <Text style={styles.toggleHistoryText}>
+                              {isExpanded ? '▲ Hide Timeline' : `▼ View Lifecycle Timeline (${item.statusHistory?.length || 0})`}
+                            </Text>
+                          </TouchableOpacity>
+
+                          {isExpanded && item.statusHistory && (
+                            <View style={styles.historyContainer}>
+                              {item.statusHistory.map((h, idx) => (
+                                <View key={h.id || idx} style={styles.historyItem}>
+                                  <View style={styles.historyDot} />
+                                  <View style={styles.historyContent}>
+                                    <Text style={styles.historyStatusText}>
+                                      {h.oldStatus ? `${h.oldStatus} ➔ ${h.newStatus}` : h.newStatus}
+                                    </Text>
+                                    <Text style={styles.historyMetaText}>
+                                      {h.changedByName || h.changedByMobile || 'System'} • {new Date(h.changedAt).toLocaleString()}
+                                    </Text>
+                                    {h.remarks ? (
+                                      <Text style={styles.historyRemarksText}>"{h.remarks}"</Text>
+                                    ) : null}
+                                  </View>
                                 </View>
-                              </View>
-                            ))}
-                          </View>
-                        )}
-                      </View>
-                    );
-                  })
+                              ))}
+                            </View>
+                          )}
+                        </View>
+                      );
+                    });
+                  })()
                 )}
               </ScrollView>
             )}
           </View>
+        )}
+
+        {/* Confirmation Modal for Joining Complaint */}
+        {confirmJoinItem && (
+          <Modal
+            transparent
+            animationType="fade"
+            visible={Boolean(confirmJoinItem)}
+            onRequestClose={() => setConfirmJoinItem(null)}>
+            <View style={styles.modalBackdrop}>
+              <View style={styles.modalDialogCard}>
+                <Text style={styles.modalDialogTitle}>🤝 Join Existing Complaint?</Text>
+                <Text style={styles.modalDialogText}>
+                  Do you want to join <Text style={{ color: '#38BDF8', fontWeight: '700' }}>{confirmJoinItem.complaintNumber}</Text> ({confirmJoinItem.issueType})?
+                </Text>
+                <Text style={[styles.modalDialogText, { color: '#94A3B8', fontSize: 13, marginTop: 6 }]}>
+                  You will receive real-time updates and notifications as this issue is resolved. A duplicate ticket will not be created.
+                </Text>
+
+                <View style={styles.modalBtnRow}>
+                  <TouchableOpacity
+                    style={styles.modalCancelBtn}
+                    onPress={() => setConfirmJoinItem(null)}
+                    disabled={joiningComplaintId !== null}>
+                    <Text style={styles.modalCancelBtnText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.modalConfirmBtn}
+                    onPress={() => handleConfirmJoin(confirmJoinItem.id)}
+                    disabled={joiningComplaintId !== null}>
+                    {joiningComplaintId !== null ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <Text style={styles.modalConfirmBtnText}>Confirm Join</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </Modal>
         )}
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -2454,4 +2885,334 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     fontSize: 12,
   },
+  // Similar Complaints / Duplicate Detection Styles
+  similarContainer: {
+    backgroundColor: '#1E293B',
+    borderRadius: 16,
+    padding: 18,
+    borderWidth: 1.5,
+    borderColor: '#38BDF8',
+  },
+  similarHeaderBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.3)',
+    marginBottom: 12,
+  },
+  similarBannerIcon: {
+    fontSize: 28,
+  },
+  similarBannerTitle: {
+    color: '#38BDF8',
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  similarBannerSub: {
+    color: '#94A3B8',
+    fontSize: 12,
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  similarInstructionText: {
+    color: '#CBD5E1',
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 16,
+  },
+  similarCard: {
+    backgroundColor: '#0F172A',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  similarCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 10,
+  },
+  similarComplaintNumber: {
+    color: '#F8FAFC',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  similarDistanceBadge: {
+    color: '#38BDF8',
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  similarImageContainer: {
+    height: 140,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#1E293B',
+    marginBottom: 10,
+  },
+  similarImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  similarMetaBox: {
+    backgroundColor: 'rgba(30, 41, 59, 0.6)',
+    borderRadius: 8,
+    padding: 10,
+    gap: 4,
+    marginBottom: 10,
+  },
+  similarMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  similarMetaLabel: {
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  similarResolvedNotice: {
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 10,
+  },
+  similarActionRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 4,
+  },
+  similarDetailsBtn: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#475569',
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+  },
+  similarDetailsBtnText: {
+    color: '#38BDF8',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  similarJoinBtn: {
+    flex: 1.3,
+    backgroundColor: '#0284C7',
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  similarJoinBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  alreadyJoinedBadge: {
+    flex: 1.3,
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    borderWidth: 1,
+    borderColor: '#10B981',
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  alreadyJoinedText: {
+    color: '#34D399',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  similarExpandedBox: {
+    marginTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#334155',
+    paddingTop: 10,
+    gap: 4,
+  },
+  similarExpandedTitle: {
+    color: '#F8FAFC',
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  similarExpandedText: {
+    color: '#94A3B8',
+    fontSize: 12,
+  },
+  noneOfTheseBtn: {
+    backgroundColor: '#4338CA',
+    borderRadius: 10,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  noneOfTheseBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 14,
+  },
+  cancelCheckBtn: {
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  cancelCheckBtnText: {
+    color: '#94A3B8',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  joinedStatsBox: {
+    backgroundColor: '#0F172A',
+    borderRadius: 10,
+    padding: 14,
+    alignItems: 'center',
+    marginVertical: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.3)',
+  },
+  joinedStatsNumber: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#FBBF24',
+  },
+  joinedStatsLabel: {
+    color: '#94A3B8',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  // Join Confirmation Modal Styles
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalDialogCard: {
+    backgroundColor: '#1E293B',
+    borderRadius: 16,
+    padding: 22,
+    width: '100%',
+    maxWidth: 420,
+    borderWidth: 1,
+    borderColor: '#38BDF8',
+  },
+  modalDialogTitle: {
+    color: '#F8FAFC',
+    fontSize: 18,
+    fontWeight: '800',
+    marginBottom: 10,
+  },
+  modalDialogText: {
+    color: '#E2E8F0',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  modalBtnRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 20,
+  },
+  modalCancelBtn: {
+    flex: 1,
+    backgroundColor: '#334155',
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  modalCancelBtnText: {
+    color: '#CBD5E1',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  modalConfirmBtn: {
+    flex: 1.4,
+    backgroundColor: '#0284C7',
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalConfirmBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 14,
+  },
+  // My Complaints Filter Row & Badges
+  complaintFilterRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 14,
+  },
+  filterChip: {
+    backgroundColor: '#1E293B',
+    borderRadius: 20,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  filterChipActive: {
+    backgroundColor: 'rgba(56, 189, 248, 0.15)',
+    borderColor: '#38BDF8',
+  },
+  filterChipText: {
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  filterChipTextActive: {
+    color: '#38BDF8',
+    fontWeight: '700',
+  },
+  originBadgeReporter: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(59, 130, 246, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(59, 130, 246, 0.4)',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginTop: 3,
+  },
+  originBadgeJoined: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.4)',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginTop: 3,
+  },
+  originBadgeText: {
+    color: '#CBD5E1',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  communityImpactBanner: {
+    backgroundColor: '#0F172A',
+    borderRadius: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    marginBottom: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: '#F59E0B',
+  },
+  communityImpactText: {
+    color: '#CBD5E1',
+    fontSize: 12,
+    fontWeight: '600',
+  },
 });
+

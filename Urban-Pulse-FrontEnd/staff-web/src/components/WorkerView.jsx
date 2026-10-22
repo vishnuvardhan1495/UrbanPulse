@@ -136,7 +136,10 @@ export default function WorkerView({ idToken, user }) {
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                   <span style={{ fontSize: '18px', fontWeight: '700', color: '#F8FAFC' }}>{item.complaintNumber}</span>
-                  <div style={{ display: 'flex', gap: '6px' }}>
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                    <span style={{ backgroundColor: 'rgba(56, 189, 248, 0.15)', border: '1px solid #38BDF8', color: '#38BDF8', fontSize: '11px', fontWeight: '700', padding: '2px 8px', borderRadius: '12px' }}>
+                      👥 {item.joinCount || 0} Joined
+                    </span>
                     <span className={`badge badge-${item.status.toLowerCase()}`}>{item.status}</span>
                     {getSlaBadge(item.slaStatus, item.remainingMinutes)}
                   </div>
@@ -208,6 +211,7 @@ export default function WorkerView({ idToken, user }) {
                     </span>
                   )}
                   <div><strong>Department:</strong> {item.departmentName}</div>
+                  <div><strong>Citizens Affected:</strong> <span style={{ color: '#38BDF8', fontWeight: '700' }}>👥 {item.joinCount || 0} citizens joined</span></div>
                   {item.slaDeadline && <div><strong>Deadline:</strong> {new Date(item.slaDeadline).toLocaleString()}</div>}
                   {item.resolvedAt && (
                     <div style={{ color: item.resolvedWithinSla ? '#34D399' : '#F87171', fontWeight: '600' }}>

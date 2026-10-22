@@ -39,6 +39,11 @@ export interface ComplaintData {
   assignedWorkerMobile?: string;
   assignedWorkerName?: string;
   statusHistory?: StatusHistoryItem[];
+  // Duplicate / Join features
+  joinCount?: number;
+  hasJoined?: boolean;
+  isOriginalReporter?: boolean;
+  distanceMeters?: number;
 }
 
 export interface CreateComplaintPayload {
@@ -47,6 +52,156 @@ export interface CreateComplaintPayload {
   longitude: number;
   issueType?: string;
   severity?: string;
+}
+
+export interface DuplicateComplaintSummary {
+  id: number;
+  complaintNumber: string;
+  issueType: string;
+  status: string;
+  severity?: string;
+  priority?: string;
+  latitude: number;
+  longitude: number;
+  imageUrl: string;
+  proofImageUrl?: string;
+  distanceMeters: number;
+  joinCount: number;
+  hasJoined?: boolean;
+  isOriginalReporter?: boolean;
+  eligibleForJoin?: boolean;
+  departmentName?: string;
+  createdAt: string;
+  slaDeadline?: string;
+}
+
+export interface CheckDuplicatePayload {
+  issueType: string;
+  latitude: number;
+  longitude: number;
+  imageUrl?: string;
+  radiusMeters?: number;
+}
+
+export interface CheckDuplicateResponse {
+  duplicateFound: boolean;
+  matchCount: number;
+  radiusMeters: number;
+  matches: DuplicateComplaintSummary[];
+}
+
+export interface JoinComplaintResponse {
+  complaintId: number;
+  complaintNumber: string;
+  message: string;
+  joinCount: number;
+  alreadyJoined: boolean;
+  isOriginalReporter: boolean;
+  joinedAt: string;
+}
+
+/**
+ * Checks backend for existing complaints within radius matching the category
+ */
+export async function checkDuplicateComplaints(
+  idToken: string,
+  payload: CheckDuplicatePayload,
+): Promise<CheckDuplicateResponse> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/complaints/check-duplicates`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${idToken}`,
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const errJson = await response.json().catch(() => null);
+      throw new Error(errJson?.message || `Failed to check duplicates (HTTP ${response.status})`);
+    }
+
+    return await response.json();
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      throw new Error('Connection timed out during duplicate complaint check.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * Links authenticated citizen to an existing complaint
+ */
+export async function joinComplaint(
+  idToken: string,
+  complaintId: number,
+): Promise<JoinComplaintResponse> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/complaints/${complaintId}/join`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${idToken}`,
+      },
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const errJson = await response.json().catch(() => null);
+      throw new Error(errJson?.message || `Failed to join complaint (HTTP ${response.status})`);
+    }
+
+    return await response.json();
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      throw new Error('Connection timed out while joining complaint.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * Fetches complaints that the authenticated citizen has joined
+ */
+export async function getJoinedComplaints(idToken: string): Promise<ComplaintData[]> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/complaints/joined`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${idToken}`,
+      },
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const errJson = await response.json().catch(() => null);
+      throw new Error(errJson?.message || `Failed to fetch joined complaints. Status: ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      throw new Error('Connection timed out loading joined complaints.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 /**
@@ -229,7 +384,6 @@ export async function registerFcmToken(
       console.log('[FCM] Token registered with backend successfully');
     }
   } catch (err: any) {
-    // Failure-isolated: logging warning without throwing to prevent breaking user flow
     console.warn('[FCM] Failed to register FCM token with backend:', err?.message);
   }
 }
@@ -253,13 +407,13 @@ export async function getWorkerComplaints(idToken: string): Promise<ComplaintDat
 
     if (!response.ok) {
       const errJson = await response.json().catch(() => null);
-      throw new Error(errJson?.message || `Failed to fetch worker tasks. Status: ${response.status}`);
+      throw new Error(errJson?.message || `Failed to fetch worker complaints. Status: ${response.status}`);
     }
 
     return await response.json();
   } catch (err: any) {
     if (err.name === 'AbortError') {
-      throw new Error('Connection timed out loading assigned tasks.');
+      throw new Error('Connection timed out loading worker tasks.');
     }
     throw err;
   } finally {
@@ -268,14 +422,14 @@ export async function getWorkerComplaints(idToken: string): Promise<ComplaintDat
 }
 
 /**
- * Updates complaint status by field worker (IN_PROGRESS or RESOLVED)
+ * Updates status of assigned complaint by worker
  * PATCH /api/worker/complaints/{id}/status
  */
 export async function updateWorkerStatus(
   idToken: string,
   complaintId: number,
   status: string,
-  remarks?: string,
+  remarks: string = '',
 ): Promise<ComplaintData> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 15000);

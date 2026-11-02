@@ -15,22 +15,22 @@ The platform digitizes and automates the civic issue redressal lifecycle:
 
 ## Table of Contents
 
-1. [Project Overview](#project-overview)
-2. [Features](#features)
-3. [Technology Stack](#technology-stack)
-4. [Project Folder Structure](#project-folder-structure)
-5. [Prerequisites and Software Requirements](#prerequisites-and-software-requirements)
-6. [Installation and Setup](#installation-and-setup)
-7. [PostgreSQL Database Setup](#postgresql-database-setup)
-8. [ML Model and Flask Service Setup](#ml-model-and-flask-service-setup)
-9. [Spring Boot Backend Setup](#spring-boot-backend-setup)
-10. [React Staff Portal Setup](#react-staff-portal-setup)
-11. [React Native Citizen App Setup](#react-native-citizen-app-setup)
-12. [How to Run the Entire Application (5 CMD Windows)](#how-to-run-the-entire-application-5-cmd-windows)
-13. [ML Classification and Automatic Routing Engine](#ml-classification-and-automatic-routing-engine)
-14. [API Configuration and Environment Variables](#api-configuration-and-environment-variables)
-15. [Troubleshooting Guide](#troubleshooting-guide)
-16. [GitHub Repository Information](#github-repository-information)
+1. [Project Overview](#1-project-overview)
+2. [Features](#2-features)
+3. [Technology Stack](#3-technology-stack)
+4. [Project Folder Structure](#4-project-folder-structure)
+5. [Prerequisites and Software Requirements](#5-prerequisites-and-software-requirements)
+6. [Installation and Setup](#6-installation-and-setup)
+7. [PostgreSQL Database Setup](#7-postgresql-database-setup)
+8. [ML Model and Flask Service Setup](#8-ml-model-and-flask-service-setup)
+9. [Spring Boot Backend Setup](#9-spring-boot-backend-setup)
+10. [React Staff Portal Setup](#10-react-staff-portal-setup)
+11. [React Native Citizen App Setup](#11-react-native-citizen-app-setup)
+12. [How to Run the Entire Application (5 CMD Windows)](#12-how-to-run-the-entire-application-5-cmd-windows)
+13. [ML Classification and Automatic Routing Engine](#13-ml-classification-and-automatic-routing-engine)
+14. [API Configuration and Environment Variables](#14-api-configuration-and-environment-variables)
+15. [Troubleshooting Guide](#15-troubleshooting-guide)
+16. [GitHub Repository Information](#16-github-repository-information)
 
 ---
 

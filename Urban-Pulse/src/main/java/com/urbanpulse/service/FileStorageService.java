@@ -62,10 +62,10 @@ public class FileStorageService {
         }
         try {
             String clean = fileUri.trim();
-            if (clean.startsWith("/uploads/")) {
-                clean = clean.substring("/uploads/".length());
-            } else if (clean.startsWith("uploads/")) {
-                clean = clean.substring("uploads/".length());
+            if (clean.contains("/uploads/")) {
+                clean = clean.substring(clean.indexOf("/uploads/") + "/uploads/".length());
+            } else if (clean.contains("uploads/")) {
+                clean = clean.substring(clean.indexOf("uploads/") + "uploads/".length());
             } else if (clean.startsWith("/")) {
                 clean = clean.substring(1);
             }
@@ -73,10 +73,23 @@ public class FileStorageService {
             if (Files.exists(path)) {
                 return Files.readAllBytes(path);
             }
-            // Try as direct path
-            Path direct = Paths.get(fileUri);
-            if (Files.exists(direct)) {
-                return Files.readAllBytes(direct);
+
+            // Try as direct filesystem path
+            try {
+                Path direct = Paths.get(fileUri);
+                if (Files.exists(direct)) {
+                    return Files.readAllBytes(direct);
+                }
+            } catch (Exception ignored) {}
+
+            // Try as HTTP / HTTPS URL
+            if (fileUri.startsWith("http://") || fileUri.startsWith("https://")) {
+                try {
+                    java.net.URI uri = java.net.URI.create(fileUri);
+                    return uri.toURL().openStream().readAllBytes();
+                } catch (Exception ex) {
+                    logger.warn("Could not read image bytes from URL {}: {}", fileUri, ex.getMessage());
+                }
             }
         } catch (Exception e) {
             logger.warn("Could not read file bytes for {}: {}", fileUri, e.getMessage());

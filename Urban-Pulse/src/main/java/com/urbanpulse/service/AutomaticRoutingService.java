@@ -96,7 +96,7 @@ public class AutomaticRoutingService {
             complaint.setStatus(ComplaintStatus.SUBMITTED);
 
             Complaint saved = complaintRepository.save(complaint);
-            recordStatusHistory(saved, null, ComplaintStatus.SUBMITTED, null,
+            recordStatusHistory(saved, ComplaintStatus.SUBMITTED, ComplaintStatus.SUBMITTED, saved.getCitizen(),
                     "ML inference unavailable. Routed to Admin for manual review.");
             return saved;
         }
@@ -132,7 +132,7 @@ public class AutomaticRoutingService {
                 complaint.setStatus(ComplaintStatus.SUBMITTED);
 
                 Complaint saved = complaintRepository.save(complaint);
-                recordStatusHistory(saved, null, ComplaintStatus.SUBMITTED, null,
+                recordStatusHistory(saved, ComplaintStatus.SUBMITTED, ComplaintStatus.SUBMITTED, saved.getCitizen(),
                         "ML predicted unsupported category '" + canonicalCategory + "'. Routed to Admin for manual review.");
                 return saved;
             }
@@ -149,7 +149,7 @@ public class AutomaticRoutingService {
                 complaint.setStatus(ComplaintStatus.SUBMITTED);
 
                 Complaint saved = complaintRepository.save(complaint);
-                recordStatusHistory(saved, null, ComplaintStatus.SUBMITTED, null,
+                recordStatusHistory(saved, ComplaintStatus.SUBMITTED, ComplaintStatus.SUBMITTED, saved.getCitizen(),
                         "Mapped department '" + targetDeptName + "' not found. Routed to Admin for manual review.");
                 return saved;
             }
@@ -167,7 +167,7 @@ public class AutomaticRoutingService {
                 complaint.setStatus(ComplaintStatus.SUBMITTED);
 
                 Complaint saved = complaintRepository.save(complaint);
-                recordStatusHistory(saved, null, ComplaintStatus.SUBMITTED, null,
+                recordStatusHistory(saved, ComplaintStatus.SUBMITTED, ComplaintStatus.SUBMITTED, saved.getCitizen(),
                         String.format("ML classified as %s (%.1f%% confidence), but no supervisor exists for %s. Routed to Admin for manual review.",
                                 canonicalCategory, confidence * 100, department.getName()));
                 return saved;
@@ -189,7 +189,7 @@ public class AutomaticRoutingService {
                     supervisor.getName() != null ? supervisor.getName() : supervisor.getMobileNumber(),
                     confidence * 100);
 
-            recordStatusHistory(saved, ComplaintStatus.SUBMITTED, ComplaintStatus.FORWARDED, null, historyRemark);
+            recordStatusHistory(saved, ComplaintStatus.SUBMITTED, ComplaintStatus.FORWARDED, saved.getCitizen(), historyRemark);
 
             // Send push notification to citizen
             if (saved.getCitizen() != null && saved.getCitizen().getFcmToken() != null) {
@@ -227,7 +227,7 @@ public class AutomaticRoutingService {
             complaint.setStatus(ComplaintStatus.SUBMITTED);
 
             Complaint saved = complaintRepository.save(complaint);
-            recordStatusHistory(saved, null, ComplaintStatus.SUBMITTED, null,
+            recordStatusHistory(saved, ComplaintStatus.SUBMITTED, ComplaintStatus.SUBMITTED, saved.getCitizen(),
                     "Low model confidence (" + confStr + " <= 50%). Routed to Admin for manual review.");
             return saved;
         }
@@ -320,11 +320,12 @@ public class AutomaticRoutingService {
     }
 
     private void recordStatusHistory(Complaint complaint, ComplaintStatus oldStatus, ComplaintStatus newStatus, User changedBy, String remarks) {
+        User effectiveActor = changedBy != null ? changedBy : (complaint != null ? complaint.getCitizen() : null);
         ComplaintStatusHistory history = ComplaintStatusHistory.builder()
                 .complaint(complaint)
                 .oldStatus(oldStatus)
                 .newStatus(newStatus)
-                .changedBy(changedBy)
+                .changedBy(effectiveActor)
                 .remarks(remarks)
                 .build();
         historyRepository.save(history);

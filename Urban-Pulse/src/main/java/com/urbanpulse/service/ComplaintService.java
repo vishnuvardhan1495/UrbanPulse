@@ -436,10 +436,18 @@ public class ComplaintService {
         );
 
         // Perform automated ML classification and routing based on 50% confidence rule
-        byte[] imageBytes = fileStorageService.loadFileBytes(request.getImageUrl());
-        Complaint routedComplaint = automaticRoutingService.routeComplaint(savedComplaint, imageBytes, request.getImageUrl());
-        if (routedComplaint != null) {
-            savedComplaint = routedComplaint;
+        try {
+            byte[] imageBytes = fileStorageService.loadFileBytes(request.getImageUrl());
+            Complaint routedComplaint = automaticRoutingService.routeComplaint(savedComplaint, imageBytes, request.getImageUrl());
+            if (routedComplaint != null) {
+                savedComplaint = routedComplaint;
+            }
+        } catch (Exception ex) {
+            logger.error("Error during automated routing for complaint {}: {}", savedComplaint.getComplaintNumber(), ex.getMessage(), ex);
+            savedComplaint.setAssignmentMethod("MANUAL_REVIEW_ROUTING_EXCEPTION");
+            savedComplaint.setRequiresManualReview(true);
+            savedComplaint.setAdminReviewReason("Automated routing encountered an issue: " + ex.getMessage());
+            savedComplaint = complaintRepository.save(savedComplaint);
         }
 
         logger.info("Complaint created successfully with number: {} and SLA deadline: {}", complaintNumber, slaDeadline);

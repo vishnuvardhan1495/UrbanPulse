@@ -44,7 +44,7 @@ public class ComplaintStatusHistory {
     private ComplaintStatus newStatus;
 
     @ManyToOne(fetch = FetchType.EAGER)
-    @JoinColumn(name = "changed_by", nullable = false)
+    @JoinColumn(name = "changed_by", nullable = true)
     private User changedBy;
 
     @CreationTimestamp

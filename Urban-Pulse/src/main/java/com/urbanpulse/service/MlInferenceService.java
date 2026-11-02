@@ -49,11 +49,14 @@ public class MlInferenceService {
      */
     public Optional<MlPredictionResponse> predictImage(byte[] imageBytes, String filename) {
         if (imageBytes == null || imageBytes.length == 0) {
-            logger.warn("ML inference skipped: image bytes are null or empty.");
+            logger.warn("ML inference skipped: image bytes are null or empty (filename={})", filename);
             return Optional.empty();
         }
 
         String predictUrl = mlServiceUrl + "/predict";
+        logger.info("ML inference request started: target='{}', imageSize={} bytes, filename='{}'",
+                predictUrl, imageBytes.length, filename);
+
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.MULTIPART_FORM_DATA);
@@ -77,18 +80,21 @@ public class MlInferenceService {
                     MlPredictionResponse.class
             );
 
+            logger.info("ML inference response received from {}: status={}", predictUrl, response.getStatusCode());
+
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 MlPredictionResponse prediction = response.getBody();
-                logger.info("ML inference success: class='{}', confidence={}",
-                        prediction.getPredictedClass(), prediction.getConfidence());
+                logger.info("ML inference success: class='{}', confidence={}, modelVersion='{}'",
+                        prediction.getPredictedClass(), prediction.getConfidence(), prediction.getModelVersion());
                 return Optional.of(prediction);
             } else {
-                logger.warn("ML inference non-2xx status: {}", response.getStatusCode());
+                logger.warn("ML inference non-2xx status: {} with body: {}", response.getStatusCode(), response.getBody());
                 return Optional.empty();
             }
 
         } catch (Exception ex) {
-            logger.warn("ML inference service call failed to {}: {}", predictUrl, ex.getMessage());
+            logger.error("ML inference service call failed to {} [Exception: {}]: {}",
+                    predictUrl, ex.getClass().getName(), ex.getMessage(), ex);
             return Optional.empty();
         }
     }

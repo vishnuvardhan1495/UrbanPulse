@@ -76,10 +76,10 @@ class AutomaticRoutingServiceTest {
         admin = User.builder().mobileNumber("+91 9000000002").name("Test Admin").role(Role.ADMIN).build();
 
         sanitationDept = Department.builder().id(1L).name("Sanitation Department").description("Garbage").build();
-        roadsDept = Department.builder().id(2L).name("Roads and Infrastructure Department").description("Potholes and Road Cracks").build();
+        roadsDept = Department.builder().id(2L).name("Road Safety Department").description("Damaged Road Signs, Potholes and Road Cracks").build();
 
         sanitationSupervisor = User.builder().mobileNumber("+91 9000000003").name("Sanitation Sup").role(Role.SUPERVISOR).department(sanitationDept).fcmToken("token-sup1").build();
-        roadsSupervisor = User.builder().mobileNumber("+91 9000000004").name("Roads Sup").role(Role.SUPERVISOR).department(roadsDept).fcmToken("token-sup2").build();
+        roadsSupervisor = User.builder().mobileNumber("+91 9000000004").name("Road Safety Sup").role(Role.SUPERVISOR).department(roadsDept).fcmToken("token-sup2").build();
 
         complaint = Complaint.builder()
                 .id(100L)
@@ -113,7 +113,7 @@ class AutomaticRoutingServiceTest {
         assertEquals(ComplaintStatus.FORWARDED, result.getStatus());
         assertEquals("Garbage", result.getPredictedCategory());
         assertEquals(0.87, result.getConfidenceScore());
-        assertEquals("AUTOMATIC_ML", result.getAssignmentMethod());
+        assertEquals("AUTO_ML", result.getAssignmentMethod());
         assertFalse(result.getRequiresManualReview());
         assertNull(result.getAdminReviewReason());
         assertEquals(sanitationDept, result.getDepartment());
@@ -126,7 +126,7 @@ class AutomaticRoutingServiceTest {
     }
 
     @Test
-    @DisplayName("Confidence > 50% (Potholes and RoadCracks, 75%): Automatically forwards to Roads and Infrastructure Department supervisor")
+    @DisplayName("Confidence > 50% (Potholes and RoadCracks, 75%): Automatically forwards to Road Safety Department supervisor")
     void testAutoForwardHighConfidencePotholes() {
         MlPredictionResponse prediction = MlPredictionResponse.builder()
                 .predictedClass("Potholes and RoadCracks")
@@ -135,7 +135,7 @@ class AutomaticRoutingServiceTest {
                 .build();
 
         when(mlInferenceService.predictImage(any(), any())).thenReturn(Optional.of(prediction));
-        when(departmentRepository.findByName("Roads and Infrastructure Department")).thenReturn(Optional.of(roadsDept));
+        when(departmentRepository.findByName("Road Safety Department")).thenReturn(Optional.of(roadsDept));
         when(userRepository.findByRoleAndDepartmentId(Role.SUPERVISOR, roadsDept.getId())).thenReturn(List.of(roadsSupervisor));
 
         Complaint result = routingService.routeComplaint(complaint, new byte[]{1, 2, 3}, "test.jpg");
@@ -144,7 +144,7 @@ class AutomaticRoutingServiceTest {
         assertEquals(ComplaintStatus.FORWARDED, result.getStatus());
         assertEquals("Potholes and Road Cracks", result.getPredictedCategory());
         assertEquals(0.75, result.getConfidenceScore());
-        assertEquals("AUTOMATIC_ML", result.getAssignmentMethod());
+        assertEquals("AUTO_ML", result.getAssignmentMethod());
         assertFalse(result.getRequiresManualReview());
         assertEquals(roadsDept, result.getDepartment());
         assertEquals(roadsSupervisor, result.getAssignedSupervisor());
@@ -222,7 +222,7 @@ class AutomaticRoutingServiceTest {
         assertNotNull(result);
         assertEquals(ComplaintStatus.SUBMITTED, result.getStatus());
         assertTrue(result.getRequiresManualReview());
-        assertEquals("ML_UNASSIGNED_NO_SUPERVISOR", result.getAssignmentMethod());
+        assertEquals("MANUAL_REVIEW_NO_SUPERVISOR", result.getAssignmentMethod());
         assertEquals(sanitationDept, result.getDepartment());
         assertNull(result.getAssignedSupervisor());
     }

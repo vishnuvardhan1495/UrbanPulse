@@ -83,12 +83,13 @@ public class AutomaticRoutingService {
             return null;
         }
 
-        logger.info("Executing automatic routing for complaint {}", complaint.getComplaintNumber());
+        logger.info("Executing automatic routing for complaint {} [Image: {}]",
+                complaint.getComplaintNumber(), filename);
 
         Optional<MlPredictionResponse> predictionOpt = mlInferenceService.predictImage(imageBytes, filename);
 
         if (predictionOpt.isEmpty()) {
-            logger.warn("ML inference service call failed for complaint {}. Routing to Admin for manual review.",
+            logger.warn("ML inference service call failed for complaint {}. Routing to Admin for manual review. [Status: SUBMITTED, Method: MANUAL_REVIEW_ML_FAILED]",
                     complaint.getComplaintNumber());
             complaint.setAssignmentMethod("MANUAL_REVIEW_ML_FAILED");
             complaint.setRequiresManualReview(true);
@@ -110,6 +111,9 @@ public class AutomaticRoutingService {
         complaint.setConfidenceScore(confidence);
         complaint.setModelVersion(prediction.getModelVersion() != null ? prediction.getModelVersion() : "urbanpulse_8class_pothole_stage1");
 
+        logger.info("ML Prediction received for complaint {}: rawCategory='{}', canonicalCategory='{}', confidence={}",
+                complaint.getComplaintNumber(), rawCategory, canonicalCategory, confidence);
+
         // Align IssueType and SLA if classified category maps to an IssueType
         IssueType mappedIssue = categoryDepartmentMappingService.getIssueTypeForCategory(canonicalCategory);
         if (mappedIssue != null && mappedIssue != IssueType.NONE) {
@@ -124,7 +128,7 @@ public class AutomaticRoutingService {
             Optional<String> deptNameOpt = categoryDepartmentMappingService.getDepartmentForCategory(canonicalCategory);
 
             if (deptNameOpt.isEmpty()) {
-                logger.warn("Predicted category '{}' has no mapped department. Routing complaint {} to Admin.",
+                logger.warn("Predicted category '{}' has no mapped department. Routing decision: Admin manual review. [Complaint: {}, Status: SUBMITTED]",
                         canonicalCategory, complaint.getComplaintNumber());
                 complaint.setAssignmentMethod("MANUAL_REVIEW_UNSUPPORTED_CATEGORY");
                 complaint.setRequiresManualReview(true);
@@ -141,7 +145,7 @@ public class AutomaticRoutingService {
             Optional<Department> deptOpt = departmentRepository.findByName(targetDeptName);
 
             if (deptOpt.isEmpty()) {
-                logger.warn("Mapped department '{}' does not exist in database. Routing complaint {} to Admin.",
+                logger.warn("Mapped department '{}' does not exist in database. Routing decision: Admin manual review. [Complaint: {}, Status: SUBMITTED]",
                         targetDeptName, complaint.getComplaintNumber());
                 complaint.setAssignmentMethod("MANUAL_REVIEW_NO_DEPARTMENT");
                 complaint.setRequiresManualReview(true);
@@ -158,10 +162,10 @@ public class AutomaticRoutingService {
             List<User> supervisors = userRepository.findByRoleAndDepartmentId(Role.SUPERVISOR, department.getId());
 
             if (supervisors.isEmpty()) {
-                logger.warn("No active supervisor found in department '{}'. Routing complaint {} to Admin.",
-                        department.getName(), complaint.getComplaintNumber());
+                logger.warn("No active supervisor found in department '{}'. Routing decision: Admin manual review. [Complaint: {}, Department: {}, Status: SUBMITTED]",
+                        department.getName(), complaint.getComplaintNumber(), department.getName());
                 complaint.setDepartment(department);
-                complaint.setAssignmentMethod("ML_UNASSIGNED_NO_SUPERVISOR");
+                complaint.setAssignmentMethod("MANUAL_REVIEW_NO_SUPERVISOR");
                 complaint.setRequiresManualReview(true);
                 complaint.setAdminReviewReason("No active supervisor found for " + department.getName());
                 complaint.setStatus(ComplaintStatus.SUBMITTED);
@@ -177,7 +181,7 @@ public class AutomaticRoutingService {
             User supervisor = supervisors.get(0);
             complaint.setDepartment(department);
             complaint.setAssignedSupervisor(supervisor);
-            complaint.setAssignmentMethod("AUTOMATIC_ML");
+            complaint.setAssignmentMethod("AUTO_ML");
             complaint.setRequiresManualReview(false);
             complaint.setStatus(ComplaintStatus.FORWARDED);
             complaint.setAssignedAt(LocalDateTime.now());
@@ -211,15 +215,15 @@ public class AutomaticRoutingService {
                 );
             }
 
-            logger.info("Complaint {} automatically forwarded to {} supervisor {}",
-                    saved.getComplaintNumber(), department.getName(), supervisor.getMobileNumber());
+            logger.info("Routing decision: AUTO_ML. Complaint {} automatically forwarded to {} supervisor {} [Category: {}, Confidence: {}%, Status: FORWARDED]",
+                    saved.getComplaintNumber(), department.getName(), supervisor.getMobileNumber(), canonicalCategory, String.format("%.1f", confidence * 100));
             return saved;
 
         } else {
             // Confidence <= 50%: Route to Admin for manual review
             String confStr = confidence != null ? String.format("%.1f%%", confidence * 100) : "N/A";
-            logger.info("Complaint {} has low ML confidence ({} <= 50%). Routing to Admin for manual review.",
-                    complaint.getComplaintNumber(), confStr);
+            logger.info("Routing decision: MANUAL_REVIEW_LOW_CONFIDENCE. Complaint {} has low ML confidence ({} <= 50%). Routed to Admin [Category: {}, Status: SUBMITTED]",
+                    complaint.getComplaintNumber(), confStr, canonicalCategory);
 
             complaint.setAssignmentMethod("MANUAL_REVIEW_LOW_CONFIDENCE");
             complaint.setRequiresManualReview(true);

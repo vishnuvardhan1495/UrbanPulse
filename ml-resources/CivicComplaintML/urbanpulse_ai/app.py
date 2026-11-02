@@ -13,9 +13,10 @@ logger = logging.getLogger("urbanpulse-ai")
 
 app = Flask(__name__)
 
-# Base directory for relative resolution
+
+# Base directory for robust relative resolution regardless of working directory
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_MODELS_DIR = os.path.join(os.path.dirname(BASE_DIR), "models")
+DEFAULT_MODELS_DIR = os.path.abspath(os.path.join(BASE_DIR, "..", "models"))
 
 MODEL_PATH = os.environ.get(
     "MODEL_PATH",
@@ -45,7 +46,7 @@ except Exception as e:
     logger.error(f"Failed to load class names: {e}")
     class_names = []
 
-@app.get("/health")
+@app.route("/health", methods=["GET"])
 def health():
     if model is None:
         return jsonify({
@@ -59,16 +60,22 @@ def health():
         "model_loaded": True,
         "model_name": os.path.basename(MODEL_PATH),
         "model_version": MODEL_VERSION,
-        "classes": class_names,
-        "num_classes": len(class_names)
-    })
+        "num_classes": len(class_names),
+        "input_dimensions": [224, 224, 3],
+        "input_shape": [None, 224, 224, 3],
+        "classes": class_names
+    }), 200
 
-@app.post("/predict")
+@app.route("/predict", methods=["POST"])
 def predict():
     if model is None:
         return jsonify({"error": "Model is not loaded"}), 503
 
+    # Support 'file' (Spring Boot default) with 'image' fallback
     uploaded = request.files.get("file")
+    if uploaded is None or uploaded.filename == "":
+        uploaded = request.files.get("image")
+
     if uploaded is None or uploaded.filename == "":
         return jsonify({"error": "Upload an image using the 'file' multipart field"}), 400
 
@@ -87,25 +94,29 @@ def predict():
         predictions = model.predict(array, verbose=0)[0]
         index = int(np.argmax(predictions))
         confidence = float(predictions[index])
+        predicted_class = class_names[index]
 
-        probabilities = {
+        probabilities = [float(p) for p in predictions]
+        class_probabilities = {
             name: float(score)
             for name, score in zip(class_names, predictions)
         }
 
-        predicted_class = class_names[index]
         logger.info(f"Prediction: {predicted_class} (Confidence: {confidence:.4f})")
 
         return jsonify({
             "predictedClass": predicted_class,
             "confidence": confidence,
             "probabilities": probabilities,
+            "classProbabilities": class_probabilities,
             "modelVersion": MODEL_VERSION
-        })
+        }), 200
     except Exception as exc:
         logger.error(f"Error during classification: {exc}")
-        return jsonify({"error": f"Could not classify image: {str(exc)}"}), 400
+        return jsonify({"error": f"Invalid or corrupted image: {str(exc)}"}), 400
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5001))
+    logger.info(f"Starting Flask ML inference service on port {port}...")
     app.run(host="0.0.0.0", port=port)
+

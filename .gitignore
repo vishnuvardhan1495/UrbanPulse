@@ -70,6 +70,9 @@ uploads/
 **/*.pem
 **/credentials.json
 **/serviceAccountKey.json
-**/.env
-**/.env.*
 **/*.env
+
+# Python
+**/__pycache__/
+**/*.pyc
+

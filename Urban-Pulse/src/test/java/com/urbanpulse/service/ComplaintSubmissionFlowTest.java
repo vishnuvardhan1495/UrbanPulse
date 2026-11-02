@@ -176,7 +176,7 @@ class ComplaintSubmissionFlowTest {
         assertEquals(ComplaintStatus.FORWARDED, response.getStatus());
         assertEquals("Garbage", response.getPredictedCategory());
         assertEquals(0.88, response.getConfidenceScore());
-        assertEquals("AUTOMATIC_ML", response.getAssignmentMethod());
+        assertEquals("AUTO_ML", response.getAssignmentMethod());
         assertFalse(response.getRequiresManualReview());
         assertEquals("Sanitation Department", response.getDepartmentName());
         assertEquals("+91 9000000002", response.getSupervisorMobile());
@@ -289,7 +289,7 @@ class ComplaintSubmissionFlowTest {
         assertNotNull(response);
         assertEquals(ComplaintStatus.SUBMITTED, response.getStatus());
         assertTrue(response.getRequiresManualReview());
-        assertEquals("ML_UNASSIGNED_NO_SUPERVISOR", response.getAssignmentMethod());
+        assertEquals("MANUAL_REVIEW_NO_SUPERVISOR", response.getAssignmentMethod());
         assertEquals("Sanitation Department", response.getDepartmentName());
         assertNull(response.getSupervisorMobile());
     }

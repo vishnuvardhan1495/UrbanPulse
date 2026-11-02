@@ -20,7 +20,7 @@ import java.util.Optional;
  *  - Fallen Trees                -> Horticulture Department
  *  - Garbage                     -> Sanitation Department
  *  - Illegal Parking             -> Traffic Department
- *  - Potholes and Road Cracks    -> Roads and Infrastructure Department
+ *  - Potholes and Road Cracks    -> Road Safety Department
  */
 @Service
 public class CategoryDepartmentMappingService {
@@ -58,7 +58,7 @@ public class CategoryDepartmentMappingService {
         deptMap.put("Fallen Trees", "Horticulture Department");
         deptMap.put("Garbage", "Sanitation Department");
         deptMap.put("Illegal Parking", "Traffic Department");
-        deptMap.put("Potholes and Road Cracks", "Roads and Infrastructure Department");
+        deptMap.put("Potholes and Road Cracks", "Road Safety Department");
         CATEGORY_TO_DEPARTMENT_MAP = Collections.unmodifiableMap(deptMap);
 
         // Category -> closest IssueType enum

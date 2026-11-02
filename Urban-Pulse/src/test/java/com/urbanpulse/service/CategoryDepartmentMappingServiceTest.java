@@ -28,7 +28,7 @@ class CategoryDepartmentMappingServiceTest {
         assertEquals(Optional.of("Horticulture Department"), mappingService.getDepartmentForCategory("Fallen Trees"));
         assertEquals(Optional.of("Sanitation Department"), mappingService.getDepartmentForCategory("Garbage"));
         assertEquals(Optional.of("Traffic Department"), mappingService.getDepartmentForCategory("Illegal Parking"));
-        assertEquals(Optional.of("Roads and Infrastructure Department"), mappingService.getDepartmentForCategory("Potholes and Road Cracks"));
+        assertEquals(Optional.of("Road Safety Department"), mappingService.getDepartmentForCategory("Potholes and Road Cracks"));
     }
 
     @Test
@@ -54,7 +54,7 @@ class CategoryDepartmentMappingServiceTest {
         assertEquals(Optional.of("Horticulture Department"), mappingService.getDepartmentForCategory("FallenTrees"));
         assertEquals(Optional.of("Sanitation Department"), mappingService.getDepartmentForCategory("Garbage"));
         assertEquals(Optional.of("Traffic Department"), mappingService.getDepartmentForCategory("IllegalParking"));
-        assertEquals(Optional.of("Roads and Infrastructure Department"), mappingService.getDepartmentForCategory("Potholes and RoadCracks"));
+        assertEquals(Optional.of("Road Safety Department"), mappingService.getDepartmentForCategory("Potholes and RoadCracks"));
     }
 
     @Test

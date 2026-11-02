@@ -51,4 +51,37 @@ public class FileStorageService {
             throw new RuntimeException("Could not store file. Please try again!", ex);
         }
     }
+
+    public Path getUploadDir() {
+        return this.uploadDir;
+    }
+
+    public byte[] loadFileBytes(String fileUri) {
+        if (fileUri == null || fileUri.trim().isEmpty()) {
+            return null;
+        }
+        try {
+            String clean = fileUri.trim();
+            if (clean.startsWith("/uploads/")) {
+                clean = clean.substring("/uploads/".length());
+            } else if (clean.startsWith("uploads/")) {
+                clean = clean.substring("uploads/".length());
+            } else if (clean.startsWith("/")) {
+                clean = clean.substring(1);
+            }
+            Path path = this.uploadDir.resolve(clean).normalize();
+            if (Files.exists(path)) {
+                return Files.readAllBytes(path);
+            }
+            // Try as direct path
+            Path direct = Paths.get(fileUri);
+            if (Files.exists(direct)) {
+                return Files.readAllBytes(direct);
+            }
+        } catch (Exception e) {
+            logger.warn("Could not read file bytes for {}: {}", fileUri, e.getMessage());
+        }
+        return null;
+    }
 }
+

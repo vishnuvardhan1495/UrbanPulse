@@ -95,4 +95,26 @@ public class Complaint {
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "assigned_worker_id")
     private User assignedWorker;
+
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "assigned_supervisor_id")
+    private User assignedSupervisor;
+
+    @Column(name = "predicted_category")
+    private String predictedCategory;
+
+    @Column(name = "model_version")
+    private String modelVersion;
+
+    @Column(name = "assignment_method")
+    private String assignmentMethod;
+
+    @Column(name = "requires_manual_review")
+    private Boolean requiresManualReview;
+
+    @Column(name = "admin_review_reason", length = 512)
+    private String adminReviewReason;
+
+    @Column(name = "assigned_at")
+    private LocalDateTime assignedAt;
 }

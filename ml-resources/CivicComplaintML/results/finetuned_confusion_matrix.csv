@@ -1,0 +1,10 @@
+,Damaged concrete structures,DamagedElectricalPoles,DamagedRoadSigns,DeadAnimalsPollution,FallenTrees,Garbage,Graffitti,IllegalParking,Potholes and RoadCracks
+Damaged concrete structures,1050,2,0,0,41,6,75,0,48
+DamagedElectricalPoles,0,279,0,0,17,6,14,0,12
+DamagedRoadSigns,0,0,36,0,0,0,3,0,0
+DeadAnimalsPollution,0,0,0,14,0,2,0,0,0
+FallenTrees,0,6,0,0,1584,15,6,2,19
+Garbage,0,0,0,1,4,326,3,0,3
+Graffitti,1,1,0,0,0,4,202,0,2
+IllegalParking,0,0,0,0,0,1,0,6,0
+Potholes and RoadCracks,1,1,0,0,0,39,3,0,325

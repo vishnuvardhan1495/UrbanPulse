@@ -1,5 +1,16 @@
 import React, { useEffect, useState } from 'react';
-import { getAdminComplaints, forwardComplaint, getDepartments, createStaffUser, createDepartment } from '../services/apiService';
+import { getAdminComplaints, forwardComplaint, manualAssignComplaint, getDepartments, createStaffUser, createDepartment } from '../services/apiService';
+
+const CANONICAL_CATEGORIES = [
+  'Damaged Concrete Structures',
+  'Damaged Electrical Poles',
+  'Damaged Road Signs',
+  'Dead Animals Pollution',
+  'Fallen Trees',
+  'Garbage',
+  'Illegal Parking',
+  'Potholes and Road Cracks',
+];
 
 export default function AdminView({ idToken, user }) {
   const [complaints, setComplaints] = useState([]);
@@ -14,6 +25,12 @@ export default function AdminView({ idToken, user }) {
   const [slaFilter, setSlaFilter] = useState('ALL');
   const [deptFilter, setDeptFilter] = useState('ALL');
   const [issueTypeFilter, setIssueTypeFilter] = useState('ALL');
+  const [reviewFilter, setReviewFilter] = useState('ALL'); // 'ALL' | 'REVIEW_ONLY'
+
+  // Manual review modal state
+  const [reviewModalComplaint, setReviewModalComplaint] = useState(null);
+  const [reviewForm, setReviewForm] = useState({ departmentId: '', supervisorMobile: '', category: '', remarks: '' });
+  const [reviewLoading, setReviewLoading] = useState(false);
 
   // Timeline modal state
   const [historyModalComplaint, setHistoryModalComplaint] = useState(null);
@@ -25,6 +42,7 @@ export default function AdminView({ idToken, user }) {
 
   // Department creation modal
   const [showDeptModal, setShowDeptModal] = useState(false);
+  const [showDeptListModal, setShowDeptListModal] = useState(false);
   const [deptForm, setDeptForm] = useState({ name: '', description: '' });
   const [deptLoading, setDeptLoading] = useState(false);
 
@@ -66,6 +84,46 @@ export default function AdminView({ idToken, user }) {
       setMessage({ type: 'error', text: err.message });
     } finally {
       setActionLoading((prev) => ({ ...prev, [complaintId]: false }));
+    }
+  };
+
+  const openReviewModal = (complaint) => {
+    setReviewModalComplaint(complaint);
+    setReviewForm({
+      departmentId: complaint.departmentId || '',
+      supervisorMobile: complaint.supervisorMobile || '',
+      category: complaint.predictedCategory || '',
+      remarks: '',
+    });
+  };
+
+  const handleManualAssignSubmit = async (e) => {
+    e.preventDefault();
+    if (!reviewForm.departmentId) {
+      setMessage({ type: 'error', text: 'Please select a responsible department.' });
+      return;
+    }
+
+    setReviewLoading(true);
+    setMessage(null);
+
+    try {
+      const updated = await manualAssignComplaint(idToken, reviewModalComplaint.id, {
+        departmentId: Number(reviewForm.departmentId),
+        supervisorMobile: reviewForm.supervisorMobile?.trim() || null,
+        category: reviewForm.category?.trim() || null,
+        remarks: reviewForm.remarks?.trim() || null,
+      });
+      setMessage({
+        type: 'success',
+        text: `Complaint ${updated.complaintNumber} successfully assigned to ${updated.departmentName}!`,
+      });
+      setReviewModalComplaint(null);
+      await loadData();
+    } catch (err) {
+      setMessage({ type: 'error', text: err.message });
+    } finally {
+      setReviewLoading(false);
     }
   };
 
@@ -134,6 +192,7 @@ export default function AdminView({ idToken, user }) {
 
   // Compute Task Summaries
   const totalCount = complaints.length;
+  const manualReviewCount = complaints.filter(c => c.requiresManualReview).length;
   const submittedCount = complaints.filter(c => c.status === 'SUBMITTED').length;
   const forwardedCount = complaints.filter(c => c.status === 'FORWARDED').length;
   const assignedCount = complaints.filter(c => c.status === 'ASSIGNED').length;
@@ -148,6 +207,7 @@ export default function AdminView({ idToken, user }) {
 
   // Filtered complaints
   const filteredComplaints = complaints.filter(c => {
+    if (reviewFilter === 'REVIEW_ONLY' && !c.requiresManualReview) return false;
     if (statusFilter !== 'ALL' && c.status !== statusFilter) return false;
     if (slaFilter !== 'ALL' && c.slaStatus !== slaFilter) return false;
     if (deptFilter !== 'ALL' && String(c.departmentId) !== String(deptFilter)) return false;
@@ -215,6 +275,9 @@ export default function AdminView({ idToken, user }) {
           <p style={{ fontSize: '13px', color: '#94A3B8' }}>Full lifecycle complaint monitoring, department routing, and SLA compliance</p>
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
+          <button onClick={() => setShowDeptListModal(true)} className="btn-primary" style={{ backgroundColor: '#0284C7' }}>
+            🏛️ View Departments ({departments.length})
+          </button>
           <button onClick={() => setShowDeptModal(true)} className="btn-primary" style={{ backgroundColor: '#059669' }}>
             + Create Department
           </button>
@@ -249,6 +312,21 @@ export default function AdminView({ idToken, user }) {
         <div className="glass-card" style={{ padding: '12px', textAlign: 'center' }}>
           <div style={{ fontSize: '11px', color: '#94A3B8', fontWeight: '600' }}>TOTAL</div>
           <div style={{ fontSize: '22px', fontWeight: '800', color: '#F8FAFC' }}>{totalCount}</div>
+        </div>
+        <div
+          className="glass-card"
+          style={{
+            padding: '12px',
+            textAlign: 'center',
+            borderColor: manualReviewCount > 0 ? '#F59E0B' : '#475569',
+            backgroundColor: manualReviewCount > 0 ? 'rgba(245, 158, 11, 0.12)' : undefined,
+            cursor: 'pointer'
+          }}
+          onClick={() => setReviewFilter(reviewFilter === 'REVIEW_ONLY' ? 'ALL' : 'REVIEW_ONLY')}
+          title="Click to toggle filter for complaints requiring review"
+        >
+          <div style={{ fontSize: '11px', color: '#FBBF24', fontWeight: '700' }}>⚠️ REQUIRES REVIEW</div>
+          <div style={{ fontSize: '22px', fontWeight: '800', color: '#FBBF24' }}>{manualReviewCount}</div>
         </div>
         <div className="glass-card" style={{ padding: '12px', textAlign: 'center', borderColor: '#F59E0B66' }}>
           <div style={{ fontSize: '11px', color: '#F59E0B', fontWeight: '600' }}>SUBMITTED</div>
@@ -294,6 +372,14 @@ export default function AdminView({ idToken, user }) {
 
       {/* Multi-Dimensional Filter Bar */}
       <div className="glass-card" style={{ padding: '16px', marginBottom: '20px', display: 'flex', flexWrap: 'wrap', gap: '14px', alignItems: 'center' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <label style={{ fontSize: '11px', fontWeight: '600', color: '#94A3B8' }}>Manual Review:</label>
+          <select className="input-field" style={{ padding: '6px 10px', fontSize: '12px', borderColor: reviewFilter === 'REVIEW_ONLY' ? '#F59E0B' : undefined }} value={reviewFilter} onChange={(e) => setReviewFilter(e.target.value)}>
+            <option value="ALL">All Complaints</option>
+            <option value="REVIEW_ONLY">⚠️ Review Needed Only ({manualReviewCount})</option>
+          </select>
+        </div>
+
         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
           <label style={{ fontSize: '11px', fontWeight: '600', color: '#94A3B8' }}>Filter Status:</label>
           <select className="input-field" style={{ padding: '6px 10px', fontSize: '12px' }} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
@@ -368,7 +454,12 @@ export default function AdminView({ idToken, user }) {
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                     <span style={{ fontSize: '17px', fontWeight: '800', color: '#F8FAFC' }}>{item.complaintNumber}</span>
-                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                      {item.requiresManualReview && (
+                        <span style={{ backgroundColor: '#78350F', border: '1px solid #F59E0B', color: '#FDE68A', fontSize: '11px', fontWeight: '700', padding: '2px 8px', borderRadius: '12px' }}>
+                          ⚠️ Review Needed
+                        </span>
+                      )}
                       <span className={`badge badge-${item.status.toLowerCase()}`}>{item.status}</span>
                       {getSlaBadge(item.slaStatus, item.remainingMinutes)}
                       <span style={{ backgroundColor: 'rgba(245, 158, 11, 0.15)', border: '1px solid #F59E0B', color: '#FBBF24', fontSize: '11px', fontWeight: '700', padding: '2px 8px', borderRadius: '12px' }}>
@@ -401,6 +492,28 @@ export default function AdminView({ idToken, user }) {
                     )}
                   </div>
 
+                  {/* AI Prediction & Routing Metadata Block */}
+                  <div style={{ backgroundColor: '#0B132B', border: '1px solid #1E293B', padding: '8px 10px', borderRadius: '6px', fontSize: '11px', color: '#CBD5E1', marginBottom: '12px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                      <div><strong>AI Category:</strong> <span style={{ color: '#38BDF8', fontWeight: '700' }}>{item.predictedCategory || 'Not Analyzed'}</span></div>
+                      <div>
+                        <strong>Confidence: </strong>
+                        <span style={{ color: (item.confidenceScore || 0) > 0.5 ? '#34D399' : '#F87171', fontWeight: '800' }}>
+                          {item.confidenceScore != null ? (item.confidenceScore * 100).toFixed(1) + '%' : 'N/A'}
+                        </span>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: '10px', color: '#94A3B8' }}>
+                      Method: <span style={{ color: item.requiresManualReview ? '#FBBF24' : '#38BDF8' }}>{item.assignmentMethod || 'N/A'}</span>
+                      {item.modelVersion && ` | ${item.modelVersion}`}
+                    </div>
+                    {item.adminReviewReason && (
+                      <div style={{ color: '#F87171', backgroundColor: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', padding: '3px 6px', borderRadius: '4px', marginTop: '4px' }}>
+                        ⚠️ <strong>Reason:</strong> {item.adminReviewReason}
+                      </div>
+                    )}
+                  </div>
+
                   {/* Metadata Details */}
                   <div style={{ fontSize: '12px', color: '#CBD5E1', display: 'flex', flexDirection: 'column', gap: '5px', marginBottom: '14px' }}>
                     <div><strong>Issue:</strong> <span style={{ color: '#38BDF8' }}>{item.issueType}</span> (SLA: {item.slaHours}h)</div>
@@ -424,6 +537,24 @@ export default function AdminView({ idToken, user }) {
                 </div>
 
                 <div>
+                  <button
+                    onClick={() => openReviewModal(item)}
+                    style={{
+                      width: '100%',
+                      padding: '8px',
+                      backgroundColor: item.requiresManualReview ? '#D97706' : '#0284C7',
+                      border: 'none',
+                      borderRadius: '6px',
+                      color: '#FFFFFF',
+                      fontWeight: '700',
+                      fontSize: '12px',
+                      cursor: 'pointer',
+                      marginBottom: '8px'
+                    }}
+                  >
+                    🛠️ {item.requiresManualReview ? 'Manual Review & Assign' : 'Reassign / Edit Department'}
+                  </button>
+
                   <button
                     onClick={() => setHistoryModalComplaint(item)}
                     style={{ width: '100%', padding: '6px', background: 'none', border: '1px solid #334155', borderRadius: '6px', color: '#38BDF8', fontSize: '12px', cursor: 'pointer', marginBottom: '10px' }}
@@ -611,6 +742,69 @@ export default function AdminView({ idToken, user }) {
         </div>
       )}
 
+      {/* Department List Modal */}
+      {showDeptListModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.75)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '20px' }}>
+          <div className="glass-card" style={{ width: '100%', maxWidth: '650px', padding: '24px', maxHeight: '80vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div>
+                <h3 style={{ fontSize: '18px', fontWeight: '700', color: '#F8FAFC' }}>
+                  Municipal Departments ({departments.length})
+                </h3>
+                <p style={{ fontSize: '12px', color: '#94A3B8' }}>
+                  Active departments in PostgreSQL and their responsible complaint categories
+                </p>
+              </div>
+              <button
+                onClick={() => setShowDeptListModal(false)}
+                style={{ background: 'none', border: 'none', color: '#94A3B8', fontSize: '18px', cursor: 'pointer' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' }}>
+              {departments.map((dept) => (
+                <div key={dept.id} style={{ padding: '12px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid #334155', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '11px', padding: '2px 6px', borderRadius: '4px', background: '#0284C722', color: '#38BDF8', fontWeight: '700' }}>
+                        ID: {dept.id}
+                      </span>
+                      <strong style={{ fontSize: '14px', color: '#F8FAFC' }}>{dept.name}</strong>
+                    </div>
+                    <div style={{ fontSize: '12px', color: '#94A3B8', marginTop: '4px' }}>
+                      <span style={{ color: '#64748B' }}>Responsible Category: </span>
+                      <span style={{ color: dept.description ? '#CBD5E1' : '#64748B', fontStyle: dept.description ? 'normal' : 'italic' }}>
+                        {dept.description || 'No category assigned currently'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <button
+                type="button"
+                onClick={() => { setShowDeptListModal(false); setShowDeptModal(true); }}
+                className="btn-primary"
+                style={{ backgroundColor: '#059669', fontSize: '12px', padding: '6px 14px' }}
+              >
+                + Create New Department
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowDeptListModal(false)}
+                style={{ padding: '8px 16px', borderRadius: '6px', border: '1px solid #334155', background: '#1E293B', color: '#CBD5E1', cursor: 'pointer', fontSize: '12px' }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* History Timeline Modal */}
       {historyModalComplaint && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.75)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '20px' }}>
@@ -650,6 +844,135 @@ export default function AdminView({ idToken, user }) {
                 No status history entries available.
               </div>
             )}
+          </div>
+        </div>
+      )}
+      {/* Admin Manual Review & Assignment Modal */}
+      {reviewModalComplaint && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '20px' }}>
+          <div className="glass-card" style={{ width: '100%', maxWidth: '580px', padding: '24px', maxHeight: '85vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ fontSize: '18px', fontWeight: '800', color: '#F8FAFC' }}>
+                🛠️ Admin Review & Assignment: {reviewModalComplaint.complaintNumber}
+              </h3>
+              <button
+                onClick={() => setReviewModalComplaint(null)}
+                style={{ background: 'none', border: 'none', color: '#94A3B8', fontSize: '18px', cursor: 'pointer' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Complaint image & AI analysis summary */}
+            <div style={{ display: 'flex', gap: '14px', marginBottom: '16px', backgroundColor: '#0F172A', padding: '12px', borderRadius: '8px' }}>
+              <div style={{ width: '120px', height: '100px', borderRadius: '6px', overflow: 'hidden', flexShrink: 0 }}>
+                <img
+                  src={reviewModalComplaint.imageUrl.startsWith('/') ? `http://localhost:8080${reviewModalComplaint.imageUrl}` : reviewModalComplaint.imageUrl}
+                  alt="Issue"
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                />
+              </div>
+              <div style={{ fontSize: '12px', color: '#CBD5E1', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <div><strong>AI Predicted:</strong> <span style={{ color: '#38BDF8' }}>{reviewModalComplaint.predictedCategory || 'None'}</span></div>
+                <div>
+                  <strong>Confidence: </strong>
+                  <span style={{ color: (reviewModalComplaint.confidenceScore || 0) > 0.5 ? '#34D399' : '#F87171', fontWeight: '700' }}>
+                    {reviewModalComplaint.confidenceScore != null ? (reviewModalComplaint.confidenceScore * 100).toFixed(1) + '%' : 'N/A'}
+                  </span>
+                </div>
+                <div><strong>Method:</strong> {reviewModalComplaint.assignmentMethod || 'N/A'}</div>
+                {reviewModalComplaint.adminReviewReason && (
+                  <div style={{ color: '#F87171', fontSize: '11px' }}>
+                    ⚠️ {reviewModalComplaint.adminReviewReason}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <form onSubmit={handleManualAssignSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: '600', color: '#94A3B8', display: 'block', marginBottom: '4px' }}>
+                  Select Responsible Department: *
+                </label>
+                <select
+                  className="input-field"
+                  style={{ width: '100%' }}
+                  value={reviewForm.departmentId}
+                  onChange={(e) => setReviewForm({ ...reviewForm, departmentId: e.target.value })}
+                  required
+                >
+                  <option value="">-- Select Department --</option>
+                  {departments.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name} {d.description ? `(${d.description})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: '600', color: '#94A3B8', display: 'block', marginBottom: '4px' }}>
+                  Complaint Category:
+                </label>
+                <select
+                  className="input-field"
+                  style={{ width: '100%' }}
+                  value={reviewForm.category}
+                  onChange={(e) => setReviewForm({ ...reviewForm, category: e.target.value })}
+                >
+                  <option value="">-- Keep Current Category --</option>
+                  {CANONICAL_CATEGORIES.map((cat) => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: '600', color: '#94A3B8', display: 'block', marginBottom: '4px' }}>
+                  Assign Specific Supervisor Mobile (Optional):
+                </label>
+                <input
+                  type="text"
+                  className="input-field"
+                  style={{ width: '100%' }}
+                  placeholder="Leave empty to auto-pick department supervisor"
+                  value={reviewForm.supervisorMobile}
+                  onChange={(e) => setReviewForm({ ...reviewForm, supervisorMobile: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: '600', color: '#94A3B8', display: 'block', marginBottom: '4px' }}>
+                  Review Remarks / Notes (Optional):
+                </label>
+                <textarea
+                  className="input-field"
+                  rows={3}
+                  style={{ width: '100%', resize: 'vertical' }}
+                  placeholder="Admin review notes regarding this routing decision"
+                  value={reviewForm.remarks}
+                  onChange={(e) => setReviewForm({ ...reviewForm, remarks: e.target.value })}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                <button
+                  type="button"
+                  onClick={() => setReviewModalComplaint(null)}
+                  style={{ flex: 1, padding: '10px', background: 'none', border: '1px solid #475569', borderRadius: '6px', color: '#94A3B8', cursor: 'pointer' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  disabled={reviewLoading}
+                  style={{ flex: 2, padding: '10px', backgroundColor: '#0284C7' }}
+                >
+                  {reviewLoading ? 'Assigning...' : 'Confirm Assignment & Forward'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

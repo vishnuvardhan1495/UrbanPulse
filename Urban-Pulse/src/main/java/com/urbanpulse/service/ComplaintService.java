@@ -1,5 +1,6 @@
 package com.urbanpulse.service;
 
+import com.urbanpulse.dto.AdminManualAssignRequest;
 import com.urbanpulse.dto.AssignWorkerRequest;
 import com.urbanpulse.dto.CheckDuplicateRequest;
 import com.urbanpulse.dto.CheckDuplicateResponse;
@@ -68,6 +69,7 @@ public class ComplaintService {
     private final FileStorageService fileStorageService;
     private final SlaService slaService;
     private final NotificationService notificationService;
+    private final AutomaticRoutingService automaticRoutingService;
 
     public ComplaintService(ComplaintRepository complaintRepository,
                             ComplaintParticipantRepository complaintParticipantRepository,
@@ -76,7 +78,8 @@ public class ComplaintService {
                             DepartmentRepository departmentRepository,
                             FileStorageService fileStorageService,
                             SlaService slaService,
-                            NotificationService notificationService) {
+                            NotificationService notificationService,
+                            AutomaticRoutingService automaticRoutingService) {
         this.complaintRepository = complaintRepository;
         this.complaintParticipantRepository = complaintParticipantRepository;
         this.historyRepository = historyRepository;
@@ -85,6 +88,7 @@ public class ComplaintService {
         this.fileStorageService = fileStorageService;
         this.slaService = slaService;
         this.notificationService = notificationService;
+        this.automaticRoutingService = automaticRoutingService;
     }
 
     /**
@@ -431,6 +435,13 @@ public class ComplaintService {
                 null
         );
 
+        // Perform automated ML classification and routing based on 50% confidence rule
+        byte[] imageBytes = fileStorageService.loadFileBytes(request.getImageUrl());
+        Complaint routedComplaint = automaticRoutingService.routeComplaint(savedComplaint, imageBytes, request.getImageUrl());
+        if (routedComplaint != null) {
+            savedComplaint = routedComplaint;
+        }
+
         logger.info("Complaint created successfully with number: {} and SLA deadline: {}", complaintNumber, slaDeadline);
         return mapToResponse(savedComplaint, normalizedMobile);
     }
@@ -489,6 +500,12 @@ public class ComplaintService {
 
         logger.info("Complaint {} forwarded to department {}", complaint.getComplaintNumber(), department.getName());
         return mapToResponse(updated, normalizedAdminMobile);
+    }
+
+    @Transactional
+    public ComplaintResponse manualAssignComplaint(Long complaintId, AdminManualAssignRequest request, String adminMobile) {
+        Complaint updated = automaticRoutingService.manualAssignByAdmin(complaintId, request, adminMobile);
+        return mapToResponse(updated, adminMobile);
     }
 
     public List<ComplaintResponse> getSupervisorComplaints(String supervisorMobile) {
@@ -805,14 +822,19 @@ public class ComplaintService {
                         .build())
                 .collect(Collectors.toList());
 
-        // Derive supervisor from the ASSIGNED step if available
+        // Derive supervisor from entity or historical ASSIGNED step
         String supervisorMobile = null;
         String supervisorName = null;
-        for (ComplaintStatusHistory h : rawHistories) {
-            if (h.getNewStatus() == ComplaintStatus.ASSIGNED && h.getChangedBy() != null) {
-                supervisorMobile = h.getChangedBy().getMobileNumber();
-                supervisorName = h.getChangedBy().getName();
-                break;
+        if (c.getAssignedSupervisor() != null) {
+            supervisorMobile = c.getAssignedSupervisor().getMobileNumber();
+            supervisorName = c.getAssignedSupervisor().getName();
+        } else {
+            for (ComplaintStatusHistory h : rawHistories) {
+                if (h.getNewStatus() == ComplaintStatus.ASSIGNED && h.getChangedBy() != null) {
+                    supervisorMobile = h.getChangedBy().getMobileNumber();
+                    supervisorName = h.getChangedBy().getName();
+                    break;
+                }
             }
         }
 
@@ -857,6 +879,13 @@ public class ComplaintService {
                 .joinCount(joinCount)
                 .hasJoined(hasJoined)
                 .isOriginalReporter(isOrig)
+                .confidenceScore(c.getConfidenceScore())
+                .predictedCategory(c.getPredictedCategory())
+                .modelVersion(c.getModelVersion())
+                .assignmentMethod(c.getAssignmentMethod())
+                .requiresManualReview(c.getRequiresManualReview())
+                .adminReviewReason(c.getAdminReviewReason())
+                .assignedAt(c.getAssignedAt())
                 .build();
     }
 

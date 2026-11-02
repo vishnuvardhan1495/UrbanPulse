@@ -44,6 +44,13 @@ export interface ComplaintData {
   hasJoined?: boolean;
   isOriginalReporter?: boolean;
   distanceMeters?: number;
+  // ML Prediction & Routing Metadata
+  predictedCategory?: string;
+  modelVersion?: string;
+  assignmentMethod?: string;
+  requiresManualReview?: boolean;
+  adminReviewReason?: string;
+  assignedAt?: string;
 }
 
 export interface CreateComplaintPayload {

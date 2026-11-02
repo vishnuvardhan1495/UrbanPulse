@@ -67,6 +67,9 @@ class ComplaintServiceTest {
     @Mock
     private NotificationService notificationService;
 
+    @Mock
+    private AutomaticRoutingService automaticRoutingService;
+
     @InjectMocks
     private ComplaintService complaintService;
 

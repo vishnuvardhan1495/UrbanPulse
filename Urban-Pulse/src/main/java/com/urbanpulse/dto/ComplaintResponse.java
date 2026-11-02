@@ -56,4 +56,12 @@ public class ComplaintResponse {
     private Boolean hasJoined;
     private Boolean isOriginalReporter;
     private Double distanceMeters;
+
+    // ML prediction & routing metadata
+    private String predictedCategory;
+    private String modelVersion;
+    private String assignmentMethod;
+    private Boolean requiresManualReview;
+    private String adminReviewReason;
+    private LocalDateTime assignedAt;
 }

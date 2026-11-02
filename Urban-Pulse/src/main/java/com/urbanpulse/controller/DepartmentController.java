@@ -44,4 +44,10 @@ public class DepartmentController {
     public ResponseEntity<DepartmentResponse> getDepartmentById(@PathVariable Long id) {
         return ResponseEntity.ok(departmentService.getDepartmentById(id));
     }
+
+    @GetMapping("/category-mappings")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPERVISOR', 'WORKER', 'CITIZEN')")
+    public ResponseEntity<java.util.Map<String, String>> getCategoryMappings() {
+        return ResponseEntity.ok(departmentService.getCategoryMappings());
+    }
 }

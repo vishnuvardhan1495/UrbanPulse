@@ -14,9 +14,16 @@ import java.util.stream.Collectors;
 public class DepartmentService {
 
     private final DepartmentRepository departmentRepository;
+    private final CategoryDepartmentMappingService categoryDepartmentMappingService;
 
-    public DepartmentService(DepartmentRepository departmentRepository) {
+    public DepartmentService(DepartmentRepository departmentRepository,
+                             CategoryDepartmentMappingService categoryDepartmentMappingService) {
         this.departmentRepository = departmentRepository;
+        this.categoryDepartmentMappingService = categoryDepartmentMappingService;
+    }
+
+    public java.util.Map<String, String> getCategoryMappings() {
+        return categoryDepartmentMappingService.getCategoryToDepartmentMap();
     }
 
     @Transactional

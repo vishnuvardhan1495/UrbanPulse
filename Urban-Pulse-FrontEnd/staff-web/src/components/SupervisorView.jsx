@@ -313,6 +313,21 @@ export default function SupervisorView({ idToken, user }) {
                     </div>
                   )}
 
+                  {/* AI Prediction & Confidence Banner */}
+                  <div style={{ backgroundColor: '#0B132B', border: '1px solid #1E293B', padding: '8px 10px', borderRadius: '6px', fontSize: '11px', color: '#CBD5E1', marginBottom: '12px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div><strong>AI Category:</strong> <span style={{ color: '#C084FC', fontWeight: '700' }}>{item.predictedCategory || item.issueType}</span></div>
+                      {item.confidenceScore != null && (
+                        <div><span style={{ backgroundColor: '#064E3B', color: '#34D399', padding: '1px 6px', borderRadius: '4px', fontWeight: '700', fontSize: '10px' }}>{(item.confidenceScore * 100).toFixed(1)}% AI Confidence</span></div>
+                      )}
+                    </div>
+                    {item.assignmentMethod && (
+                      <div style={{ fontSize: '10px', color: '#94A3B8', marginTop: '3px' }}>
+                        Method: <span style={{ color: '#38BDF8' }}>{item.assignmentMethod}</span>
+                      </div>
+                    )}
+                  </div>
+
                   {/* Complaint Details */}
                   <div style={{ fontSize: '12px', color: '#CBD5E1', display: 'flex', flexDirection: 'column', gap: '5px', marginBottom: '14px' }}>
                     <div><strong>Issue:</strong> <span style={{ color: '#38BDF8' }}>{item.issueType}</span> (SLA: {item.slaHours}h)</div>

@@ -37,6 +37,23 @@ export async function forwardComplaint(idToken, complaintId, departmentId) {
   return await response.json();
 }
 
+export async function manualAssignComplaint(idToken, complaintId, data) {
+  const response = await fetch(`${API_BASE_URL}/api/admin/complaints/${complaintId}/manual-assign`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => null);
+    throw new Error(err?.message || 'Failed to manually assign complaint');
+  }
+  return await response.json();
+}
+
+
 export async function getSupervisorComplaints(idToken) {
   const response = await fetch(`${API_BASE_URL}/api/supervisor/complaints`, {
     headers: { Authorization: `Bearer ${idToken}` },

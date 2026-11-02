@@ -1,5 +1,6 @@
 package com.urbanpulse.controller;
 
+import com.urbanpulse.dto.AdminManualAssignRequest;
 import com.urbanpulse.dto.ComplaintResponse;
 import com.urbanpulse.dto.ForwardComplaintRequest;
 import com.urbanpulse.service.ComplaintService;
@@ -40,6 +41,16 @@ public class AdminComplaintController {
                                                               Authentication authentication) {
         String adminMobile = authentication.getName();
         ComplaintResponse response = complaintService.forwardComplaint(id, request, adminMobile);
+        return ResponseEntity.ok(response);
+    }
+
+    @PatchMapping("/{id}/manual-assign")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ComplaintResponse> manualAssignComplaint(@PathVariable Long id,
+                                                                   @Valid @RequestBody AdminManualAssignRequest request,
+                                                                   Authentication authentication) {
+        String adminMobile = authentication.getName();
+        ComplaintResponse response = complaintService.manualAssignComplaint(id, request, adminMobile);
         return ResponseEntity.ok(response);
     }
 }

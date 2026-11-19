@@ -58,16 +58,15 @@ class LiveMlInferenceIntegrationTest {
     private ComplaintService complaintService;
 
     @Test
-    @DisplayName("End-to-End: Citizen creates complaint with real garbage image -> Flask classifies -> Auto forwards to Sanitation supervisor")
+    @DisplayName("End-to-End: Citizen creates complaint with real image -> Flask classifies -> Auto forwards to supervisor")
     void testLiveEndToEndGarbageComplaintForwarding() throws Exception {
-        // Upload image 0737b13c-d680-448c-a1af-acb149bcdd23.jpg (which model classifies as Garbage ~91%)
-        String imageUri = "/uploads/0737b13c-d680-448c-a1af-acb149bcdd23.jpg";
+        String imageUri = "/uploads/709a937b-3683-4bb3-8c0e-eb628661dd41.jpg";
 
         com.urbanpulse.dto.CreateComplaintRequest request = com.urbanpulse.dto.CreateComplaintRequest.builder()
                 .imageUrl(imageUri)
                 .latitude(17.3850)
                 .longitude(78.4867)
-                .issueType(com.urbanpulse.entity.IssueType.GARBAGE)
+                .issueType(com.urbanpulse.entity.IssueType.INFRASTRUCTURE_DAMAGE)
                 .severity("HIGH")
                 .build();
 
@@ -86,11 +85,11 @@ class LiveMlInferenceIntegrationTest {
         System.out.println("  Supervisor: " + response.getSupervisorName() + " (" + response.getSupervisorMobile() + ")");
 
         assertEquals(com.urbanpulse.entity.ComplaintStatus.FORWARDED, response.getStatus());
-        assertEquals("Garbage", response.getPredictedCategory());
+        assertEquals("Fallen Trees", response.getPredictedCategory());
         assertTrue(response.getConfidenceScore() > 0.50);
         assertEquals("AUTO_ML", response.getAssignmentMethod());
         assertFalse(response.getRequiresManualReview());
-        assertEquals("Sanitation Department", response.getDepartmentName());
+        assertEquals("Horticulture Department", response.getDepartmentName());
         assertNotNull(response.getSupervisorMobile());
     }
 }

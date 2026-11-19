@@ -28,19 +28,21 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Service managing automated two-stage ML classification and confidence-based routing for complaints.
+ * Service managing automated 8-class ML classification and confidence-based routing for complaints.
  *
- * Stage 1: Binary Relevance Gatekeeper (CIVIC_ISSUE vs. NOT_CIVIC_ISSUE)
- *  - NOT_CIVIC_ISSUE: NEVER auto-forward to supervisors. Save as PENDING_ADMIN_REVIEW for Admin manual triage.
- *  - CIVIC_ISSUE: Proceed to Stage 2 (Eight-Class Model).
+ * Routing Rules:
+ *  - Prediction Confidence >= 50% (>= 0.50):
+ *      Accept predicted classification, map to responsible department, and automatically forward
+ *      the complaint to the department's active supervisor. Status becomes FORWARDED.
  *
- * Stage 2: Eight-Class Classifier
- *  - Confidence > 50%: Automatically forward to the mapped department's active supervisor.
- *  - Confidence <= 50%: Send to Admin for manual review.
+ *  - Prediction Confidence < 50% (< 0.50):
+ *      Do not automatically assign to any department or supervisor. Forward complaint to Admin
+ *      for manual review. Status becomes PENDING_ADMIN_REVIEW.
  *
- * Admin Manual Review:
- *  - Approve: Admin selects 1 of 8 categories -> routes to department & supervisor.
- *  - Reject: Admin provides rejection reason -> updates status to REJECTED.
+ *  - Exact Boundary Condition:
+ *      49.99% -> Admin Review (PENDING_ADMIN_REVIEW)
+ *      50.00% -> Department Supervisor (FORWARDED)
+ *      85.00% -> Department Supervisor (FORWARDED)
  */
 @Service
 public class AutomaticRoutingService {
@@ -79,8 +81,8 @@ public class AutomaticRoutingService {
     }
 
     /**
-     * Executes two-stage ML inference on the complaint image and applies confidence-based routing.
-     * Guaranteed safe: Never throws exceptions that abort complaint submission.
+     * Executes single-stage 8-class ML inference on the complaint image and applies confidence-based routing.
+     * Guaranteed safe: Never throws unhandled exceptions that abort the complaint submission transaction.
      */
     @Transactional
     public Complaint routeComplaint(Complaint complaint, byte[] imageBytes, String filename) {
@@ -88,13 +90,13 @@ public class AutomaticRoutingService {
             return null;
         }
 
-        logger.info("Executing two-stage automatic routing for complaint {} [Image: {}]",
+        logger.info("Executing automatic routing for complaint {} [Image: {}]",
                 complaint.getComplaintNumber(), filename);
 
         Optional<MlPredictionResponse> predictionOpt = mlInferenceService.predictImage(imageBytes, filename);
 
         if (predictionOpt.isEmpty()) {
-            logger.warn("ML inference service call failed for complaint {}. Routing to Admin for manual review. [Status: SUBMITTED, Method: MANUAL_REVIEW_ML_FAILED]",
+            logger.warn("ML inference service call failed for complaint {}. Routing to Admin for manual review. [Status: PENDING_ADMIN_REVIEW, Method: MANUAL_REVIEW_ML_FAILED]",
                     complaint.getComplaintNumber());
             complaint.setAssignmentMethod("MANUAL_REVIEW_ML_FAILED");
             complaint.setRequiresManualReview(true);
@@ -102,73 +104,28 @@ public class AutomaticRoutingService {
             complaint.setClassificationStatus("FAILED");
             complaint.setClassificationSource("FALLBACK_ML_FAILED");
             complaint.setAdminReviewReason("ML service unavailable or classification failed");
-            complaint.setStatus(ComplaintStatus.SUBMITTED);
-
-            Complaint saved = complaintRepository.save(complaint);
-            recordStatusHistory(saved, ComplaintStatus.SUBMITTED, ComplaintStatus.SUBMITTED, saved.getCitizen(),
-                    "ML inference unavailable. Routed to Admin for manual review.");
-            return saved;
-        }
-
-        MlPredictionResponse prediction = predictionOpt.get();
-
-        // =========================================================================
-        // STAGE 1: Check Binary Relevance (Civic vs. Non-Civic)
-        // =========================================================================
-        Boolean isCivic = prediction.getIsCivicIssue();
-        if (Boolean.FALSE.equals(isCivic)) {
-            logger.warn("STAGE 1 Gatekeeper: Image classified as NOT_CIVIC_ISSUE for complaint {}. Forwarding to Admin for manual review.",
-                    complaint.getComplaintNumber());
-
-            complaint.setIsCivicIssue(false);
-            complaint.setBinaryPrediction(prediction.getBinaryPrediction() != null ? prediction.getBinaryPrediction() : "NOT_CIVIC_ISSUE");
-            complaint.setNotCivicProbability(prediction.getNotCivicProbability());
-            complaint.setCivicProbability(prediction.getCivicProbability());
-            complaint.setBinaryConfidence(prediction.getNotCivicProbability());
-            complaint.setPredictedCategory(null);
-            complaint.setConfidenceScore(prediction.getConfidence());
-            complaint.setModelVersion(prediction.getModelVersion() != null ? prediction.getModelVersion() : "urbanpulse_cascaded_v2");
             complaint.setStatus(ComplaintStatus.PENDING_ADMIN_REVIEW);
-            complaint.setReviewStatus("PENDING_ADMIN_REVIEW");
-            complaint.setClassificationStatus("PENDING_REVIEW");
-            complaint.setClassificationSource("STAGE_1_BINARY_AI");
-            complaint.setRequiresManualReview(true);
-            complaint.setAssignmentMethod("PENDING_ADMIN_REVIEW");
-
-            String confStr = prediction.getNotCivicProbability() != null
-                    ? String.format("%.1f%%", prediction.getNotCivicProbability() * 100) : "N/A";
-            complaint.setAdminReviewReason("Stage 1 Binary Relevance Filter: Non-civic image detected (NOT_CIVIC_ISSUE, non-civic confidence: " + confStr + ")");
             complaint.setDepartment(null);
             complaint.setAssignedSupervisor(null);
             complaint.setAssignedWorker(null);
 
             Complaint saved = complaintRepository.save(complaint);
             recordStatusHistory(saved, ComplaintStatus.SUBMITTED, ComplaintStatus.PENDING_ADMIN_REVIEW, saved.getCitizen(),
-                    "Stage 1 AI filter: Non-civic image detected (" + confStr + "). Submitted and forwarded to Admin for manual review.");
+                    "ML inference unavailable. Forwarded to Admin for manual review.");
             return saved;
         }
 
-        // =========================================================================
-        // STAGE 2: Image confirmed as CIVIC_ISSUE - Process Eight-Class Classification
-        // =========================================================================
-        complaint.setIsCivicIssue(true);
-        complaint.setBinaryPrediction(prediction.getBinaryPrediction() != null ? prediction.getBinaryPrediction() : "CIVIC_ISSUE");
-        complaint.setNotCivicProbability(prediction.getNotCivicProbability());
-        complaint.setCivicProbability(prediction.getCivicProbability());
-        complaint.setBinaryConfidence(prediction.getCivicProbability());
-        complaint.setClassificationStatus("CLASSIFIED");
-        complaint.setClassificationSource("AUTO_ML");
-        complaint.setReviewStatus("CIVIC_AUTOMATIC");
-
+        MlPredictionResponse prediction = predictionOpt.get();
         Double confidence = prediction.getConfidence();
         String rawCategory = prediction.getPredictedClass();
         String canonicalCategory = categoryDepartmentMappingService.normalizeCategory(rawCategory);
 
         complaint.setPredictedCategory(canonicalCategory);
         complaint.setConfidenceScore(confidence);
-        complaint.setModelVersion(prediction.getModelVersion() != null ? prediction.getModelVersion() : "urbanpulse_cascaded_v2");
+        complaint.setModelVersion(prediction.getModelVersion() != null ? prediction.getModelVersion() : "urbanpulse_8class_pothole_stage1");
+        complaint.setClassificationSource("AUTO_ML");
 
-        logger.info("ML Prediction received for complaint {}: rawCategory='{}', canonicalCategory='{}', confidence={}",
+        logger.info("8-Class ML Prediction received for complaint {}: rawCategory='{}', canonicalCategory='{}', confidence={}",
                 complaint.getComplaintNumber(), rawCategory, canonicalCategory, confidence);
 
         // Align IssueType and SLA if classified category maps to an IssueType
@@ -177,25 +134,34 @@ public class AutomaticRoutingService {
             complaint.setIssueType(mappedIssue);
             int slaHours = slaService.getSlaHours(mappedIssue);
             complaint.setSlaHours(slaHours);
-            complaint.setSlaDeadline(slaService.calculateDeadline(complaint.getCreatedAt() != null ? complaint.getCreatedAt() : LocalDateTime.now(), mappedIssue));
+            complaint.setSlaDeadline(slaService.calculateDeadline(
+                    complaint.getCreatedAt() != null ? complaint.getCreatedAt() : LocalDateTime.now(), mappedIssue));
         }
 
-        // Apply exact 50% confidence rule (> 0.50 vs <= 0.50)
-        if (confidence != null && confidence > confidenceThreshold) {
+        // =========================================================================
+        // CONFIDENCE-BASED ROUTING DECISION: Exact 50% Threshold (0.50)
+        // =========================================================================
+        if (confidence != null && confidence >= confidenceThreshold) {
+            // ---------------------------------------------------------------------
+            // CASE A: Confidence >= 50% (High Confidence) -> Department Supervisor
+            // ---------------------------------------------------------------------
             Optional<String> deptNameOpt = categoryDepartmentMappingService.getDepartmentForCategory(canonicalCategory);
 
             if (deptNameOpt.isEmpty()) {
-                logger.warn("Predicted category '{}' has no mapped department. Routing decision: Admin manual review. [Complaint: {}, Status: SUBMITTED]",
+                logger.warn("Predicted category '{}' has no mapped department. Routing to Admin manual review. [Complaint: {}]",
                         canonicalCategory, complaint.getComplaintNumber());
                 complaint.setAssignmentMethod("MANUAL_REVIEW_UNSUPPORTED_CATEGORY");
                 complaint.setRequiresManualReview(true);
                 complaint.setReviewStatus("PENDING_ADMIN_REVIEW");
+                complaint.setClassificationStatus("PENDING_REVIEW");
                 complaint.setAdminReviewReason("Predicted category '" + canonicalCategory + "' is unsupported.");
-                complaint.setStatus(ComplaintStatus.SUBMITTED);
+                complaint.setStatus(ComplaintStatus.PENDING_ADMIN_REVIEW);
+                complaint.setDepartment(null);
+                complaint.setAssignedSupervisor(null);
 
                 Complaint saved = complaintRepository.save(complaint);
-                recordStatusHistory(saved, ComplaintStatus.SUBMITTED, ComplaintStatus.SUBMITTED, saved.getCitizen(),
-                        "ML predicted unsupported category '" + canonicalCategory + "'. Routed to Admin for manual review.");
+                recordStatusHistory(saved, ComplaintStatus.SUBMITTED, ComplaintStatus.PENDING_ADMIN_REVIEW, saved.getCitizen(),
+                        "ML predicted unsupported category '" + canonicalCategory + "'. Forwarded to Admin for manual review.");
                 return saved;
             }
 
@@ -203,17 +169,20 @@ public class AutomaticRoutingService {
             Optional<Department> deptOpt = departmentRepository.findByName(targetDeptName);
 
             if (deptOpt.isEmpty()) {
-                logger.warn("Mapped department '{}' does not exist in database. Routing decision: Admin manual review. [Complaint: {}, Status: SUBMITTED]",
+                logger.warn("Mapped department '{}' does not exist in database. Routing to Admin manual review. [Complaint: {}]",
                         targetDeptName, complaint.getComplaintNumber());
                 complaint.setAssignmentMethod("MANUAL_REVIEW_NO_DEPARTMENT");
                 complaint.setRequiresManualReview(true);
                 complaint.setReviewStatus("PENDING_ADMIN_REVIEW");
+                complaint.setClassificationStatus("PENDING_REVIEW");
                 complaint.setAdminReviewReason("Department '" + targetDeptName + "' does not exist in database.");
-                complaint.setStatus(ComplaintStatus.SUBMITTED);
+                complaint.setStatus(ComplaintStatus.PENDING_ADMIN_REVIEW);
+                complaint.setDepartment(null);
+                complaint.setAssignedSupervisor(null);
 
                 Complaint saved = complaintRepository.save(complaint);
-                recordStatusHistory(saved, ComplaintStatus.SUBMITTED, ComplaintStatus.SUBMITTED, saved.getCitizen(),
-                        "Mapped department '" + targetDeptName + "' not found. Routed to Admin for manual review.");
+                recordStatusHistory(saved, ComplaintStatus.SUBMITTED, ComplaintStatus.PENDING_ADMIN_REVIEW, saved.getCitizen(),
+                        "Mapped department '" + targetDeptName + "' not found. Forwarded to Admin for manual review.");
                 return saved;
             }
 
@@ -221,18 +190,19 @@ public class AutomaticRoutingService {
             List<User> supervisors = userRepository.findByRoleAndDepartmentId(Role.SUPERVISOR, department.getId());
 
             if (supervisors.isEmpty()) {
-                logger.warn("No active supervisor found in department '{}'. Routing decision: Admin manual review. [Complaint: {}, Department: {}, Status: SUBMITTED]",
-                        department.getName(), complaint.getComplaintNumber(), department.getName());
+                logger.warn("No active supervisor found in department '{}'. Routing to Admin manual review. [Complaint: {}]",
+                        department.getName(), complaint.getComplaintNumber());
                 complaint.setDepartment(department);
                 complaint.setAssignmentMethod("MANUAL_REVIEW_NO_SUPERVISOR");
                 complaint.setRequiresManualReview(true);
                 complaint.setReviewStatus("PENDING_ADMIN_REVIEW");
+                complaint.setClassificationStatus("PENDING_REVIEW");
                 complaint.setAdminReviewReason("No active supervisor found for " + department.getName());
-                complaint.setStatus(ComplaintStatus.SUBMITTED);
+                complaint.setStatus(ComplaintStatus.PENDING_ADMIN_REVIEW);
 
                 Complaint saved = complaintRepository.save(complaint);
-                recordStatusHistory(saved, ComplaintStatus.SUBMITTED, ComplaintStatus.SUBMITTED, saved.getCitizen(),
-                        String.format("ML classified as %s (%.1f%% confidence), but no supervisor exists for %s. Routed to Admin for manual review.",
+                recordStatusHistory(saved, ComplaintStatus.SUBMITTED, ComplaintStatus.PENDING_ADMIN_REVIEW, saved.getCitizen(),
+                        String.format("ML classified as %s (%.1f%% confidence), but no supervisor exists for %s. Forwarded to Admin for manual review.",
                                 canonicalCategory, confidence * 100, department.getName()));
                 return saved;
             }
@@ -243,12 +213,14 @@ public class AutomaticRoutingService {
             complaint.setAssignedSupervisor(supervisor);
             complaint.setAssignmentMethod("AUTO_ML");
             complaint.setRequiresManualReview(false);
+            complaint.setReviewStatus("AUTO_ROUTED");
+            complaint.setClassificationStatus("CLASSIFIED");
             complaint.setStatus(ComplaintStatus.FORWARDED);
             complaint.setAssignedAt(LocalDateTime.now());
 
             Complaint saved = complaintRepository.save(complaint);
 
-            String historyRemark = String.format("Complaint automatically forwarded to %s supervisor %s (ML confidence: %.1f%%)",
+            String historyRemark = String.format("Complaint automatically forwarded to %s supervisor %s (ML confidence: %.2f%%)",
                     department.getName(),
                     supervisor.getName() != null ? supervisor.getName() : supervisor.getMobileNumber(),
                     confidence * 100);
@@ -276,35 +248,41 @@ public class AutomaticRoutingService {
             }
 
             logger.info("Routing decision: AUTO_ML. Complaint {} automatically forwarded to {} supervisor {} [Category: {}, Confidence: {}%, Status: FORWARDED]",
-                    saved.getComplaintNumber(), department.getName(), supervisor.getMobileNumber(), canonicalCategory, String.format("%.1f", confidence * 100));
+                    saved.getComplaintNumber(), department.getName(), supervisor.getMobileNumber(), canonicalCategory, String.format("%.2f", confidence * 100));
             return saved;
 
         } else {
-            // Confidence <= 50%: Route to Admin for manual review
-            String confStr = confidence != null ? String.format("%.1f%%", confidence * 100) : "N/A";
-            logger.info("Routing decision: MANUAL_REVIEW_LOW_CONFIDENCE. Complaint {} has low ML confidence ({} <= 50%). Routed to Admin [Category: {}, Status: SUBMITTED]",
+            // ---------------------------------------------------------------------
+            // CASE B: Confidence < 50% (Low Confidence) -> Admin Review
+            // ---------------------------------------------------------------------
+            String confStr = confidence != null ? String.format("%.2f%%", confidence * 100) : "N/A";
+            logger.info("Routing decision: MANUAL_REVIEW_LOW_CONFIDENCE. Complaint {} has low ML confidence ({} < 50%). Routed to Admin [Category: {}, Status: PENDING_ADMIN_REVIEW]",
                     complaint.getComplaintNumber(), confStr, canonicalCategory);
 
+            complaint.setDepartment(null);
+            complaint.setAssignedSupervisor(null);
+            complaint.setAssignedWorker(null);
             complaint.setAssignmentMethod("MANUAL_REVIEW_LOW_CONFIDENCE");
             complaint.setRequiresManualReview(true);
             complaint.setReviewStatus("PENDING_ADMIN_REVIEW");
-            complaint.setAdminReviewReason("Low model confidence: " + confStr + " <= 50%");
-            complaint.setStatus(ComplaintStatus.SUBMITTED);
+            complaint.setClassificationStatus("PENDING_REVIEW");
+            complaint.setAdminReviewReason("Low model confidence: " + confStr + " (< 50%). Forwarded to Admin for manual review.");
+            complaint.setStatus(ComplaintStatus.PENDING_ADMIN_REVIEW);
 
             Complaint saved = complaintRepository.save(complaint);
-            recordStatusHistory(saved, ComplaintStatus.SUBMITTED, ComplaintStatus.SUBMITTED, saved.getCitizen(),
-                    "Low model confidence (" + confStr + " <= 50%). Routed to Admin for manual review.");
+            recordStatusHistory(saved, ComplaintStatus.SUBMITTED, ComplaintStatus.PENDING_ADMIN_REVIEW, saved.getCitizen(),
+                    "Low model confidence (" + confStr + " < 50%). Forwarded to Admin for manual review.");
             return saved;
         }
     }
 
     /**
-     * Admin Action A: Approve Non-Civic Complaint.
-     * Admin manually verifies it is a civic issue, selects 1 of the 8 categories,
+     * Admin Review Action: Approve Complaint.
+     * Admin manually verifies complaint, selects/confirms 1 of the 8 categories,
      * routes it to the department supervisor, and updates review audit trail.
      */
     @Transactional
-    public Complaint approveNonCivicComplaintByAdmin(Long complaintId, AdminReviewApproveRequest request, String adminMobile) {
+    public Complaint approveLowConfidenceComplaintByAdmin(Long complaintId, AdminReviewApproveRequest request, String adminMobile) {
         String normalizedAdminMobile = PhoneNumberUtil.normalize(adminMobile);
         User admin = userRepository.findByMobileNumber(normalizedAdminMobile)
                 .orElseThrow(() -> new IllegalArgumentException("Admin user not found: " + normalizedAdminMobile));
@@ -371,7 +349,6 @@ public class AutomaticRoutingService {
         }
 
         ComplaintStatus oldStatus = complaint.getStatus();
-        complaint.setIsCivicIssue(true);
         complaint.setClassificationSource("ADMIN_VERIFIED");
         complaint.setClassificationStatus("CLASSIFIED");
         complaint.setReviewStatus("ADMIN_APPROVED");
@@ -388,7 +365,7 @@ public class AutomaticRoutingService {
 
         Complaint saved = complaintRepository.save(complaint);
 
-        String remark = "Admin manual review: Approved as civic issue under category '" + canonicalCategory +
+        String remark = "Admin manual review: Approved complaint under category '" + canonicalCategory +
                 "', routed to " + department.getName() +
                 (supervisor != null ? " (Supervisor: " + (supervisor.getName() != null ? supervisor.getName() : supervisor.getMobileNumber()) + ")" : "") +
                 (request.getRemarks() != null && !request.getRemarks().trim().isEmpty() ? ". Remarks: " + request.getRemarks().trim() : "");
@@ -421,11 +398,19 @@ public class AutomaticRoutingService {
     }
 
     /**
-     * Admin Action B: Reject Non-Civic Complaint.
-     * Admin marks complaint as irrelevant/not actionable with rejection reason.
+     * Backward-compatible alias for approveLowConfidenceComplaintByAdmin.
      */
     @Transactional
-    public Complaint rejectNonCivicComplaintByAdmin(Long complaintId, AdminReviewRejectRequest request, String adminMobile) {
+    public Complaint approveNonCivicComplaintByAdmin(Long complaintId, AdminReviewApproveRequest request, String adminMobile) {
+        return approveLowConfidenceComplaintByAdmin(complaintId, request, adminMobile);
+    }
+
+    /**
+     * Admin Review Action: Reject Complaint.
+     * Admin marks complaint as rejected with mandatory rejection reason.
+     */
+    @Transactional
+    public Complaint rejectLowConfidenceComplaintByAdmin(Long complaintId, AdminReviewRejectRequest request, String adminMobile) {
         String normalizedAdminMobile = PhoneNumberUtil.normalize(adminMobile);
         User admin = userRepository.findByMobileNumber(normalizedAdminMobile)
                 .orElseThrow(() -> new IllegalArgumentException("Admin user not found: " + normalizedAdminMobile));
@@ -478,8 +463,15 @@ public class AutomaticRoutingService {
     }
 
     /**
-     * Admin manual assignment action (legacy/general support):
-     * Overrides/sets department, supervisor, category, and clears manual review flag.
+     * Backward-compatible alias for rejectLowConfidenceComplaintByAdmin.
+     */
+    @Transactional
+    public Complaint rejectNonCivicComplaintByAdmin(Long complaintId, AdminReviewRejectRequest request, String adminMobile) {
+        return rejectLowConfidenceComplaintByAdmin(complaintId, request, adminMobile);
+    }
+
+    /**
+     * Admin manual assignment action (overrides/sets department, supervisor, category, and clears manual review flag).
      */
     @Transactional
     public Complaint manualAssignByAdmin(Long complaintId, AdminManualAssignRequest request, String adminMobile) {
@@ -521,14 +513,10 @@ public class AutomaticRoutingService {
             }
         }
 
-        if (Boolean.FALSE.equals(complaint.getIsCivicIssue())) {
-            complaint.setIsCivicIssue(true);
-            complaint.setBinaryPrediction("CIVIC_ISSUE_OVERRIDDEN_BY_ADMIN");
-        }
-
         ComplaintStatus oldStatus = complaint.getStatus();
         complaint.setDepartment(department);
         complaint.setAssignedSupervisor(supervisor);
+        complaint.setAssignedWorker(null);
         complaint.setStatus(ComplaintStatus.FORWARDED);
         complaint.setAssignmentMethod("MANUAL_ADMIN");
         complaint.setReviewStatus("ADMIN_APPROVED");

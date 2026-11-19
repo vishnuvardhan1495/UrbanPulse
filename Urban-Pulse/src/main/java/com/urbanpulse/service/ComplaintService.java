@@ -168,9 +168,6 @@ public class ComplaintService {
         if (request == null) {
             throw new IllegalArgumentException("Request body cannot be null.");
         }
-        if (request.getIssueType() == null) {
-            throw new IllegalArgumentException("Issue category is required for duplicate checking.");
-        }
         validateCoordinates(request.getLatitude(), request.getLongitude());
 
         if (request.getRadiusMeters() != null && request.getRadiusMeters() < 0) {
@@ -183,7 +180,9 @@ public class ComplaintService {
 
         String normalizedUser = currentUserMobile != null ? PhoneNumberUtil.normalize(currentUserMobile) : null;
 
-        List<Complaint> candidates = complaintRepository.findByIssueTypeOrderByCreatedAtDesc(request.getIssueType());
+        List<Complaint> candidates = (request.getIssueType() != null && request.getIssueType() != IssueType.NONE)
+                ? complaintRepository.findByIssueTypeOrderByCreatedAtDesc(request.getIssueType())
+                : complaintRepository.findAllByOrderByCreatedAtDesc();
         List<DuplicateComplaintSummary> matches = new ArrayList<>();
 
         // Real-world mobile GPS jitter margin allows boundary complaints (such as 30.5m) to be matched
@@ -501,6 +500,7 @@ public class ComplaintService {
 
         ComplaintStatus oldStatus = complaint.getStatus();
         complaint.setDepartment(department);
+        complaint.setAssignedWorker(null);
         complaint.setStatus(ComplaintStatus.FORWARDED);
         // SLA MUST NOT RESET: original slaHours and slaDeadline remain intact
 

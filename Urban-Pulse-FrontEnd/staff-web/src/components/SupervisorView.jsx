@@ -194,7 +194,7 @@ export default function SupervisorView({ idToken, user }) {
         ) : (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
             {workers.map((w) => {
-              const activeTasks = complaints.filter(c => c.assignedWorkerMobile === w.mobileNumber && c.status !== 'RESOLVED').length;
+              const activeTasks = complaints.filter(c => c.assignedWorkerMobile === w.mobileNumber && (c.status === 'ASSIGNED' || c.status === 'IN_PROGRESS')).length;
               return (
                 <div key={w.mobileNumber} style={{
                   backgroundColor: '#1E293B',
@@ -445,7 +445,7 @@ export default function SupervisorView({ idToken, user }) {
                       </button>
                     </div>
                   </div>
-                ) : hasAssignedWorker ? (
+                ) : (isAssigned && hasAssignedWorker) ? (
                   <div style={{ borderTop: '1px solid #334155', paddingTop: '12px' }}>
                     <label style={{ fontSize: '11px', fontWeight: '600', color: '#CBD5E1', display: 'block', marginBottom: '6px' }}>
                       Reassign Field Worker:

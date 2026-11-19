@@ -550,6 +550,37 @@ class ComplaintServiceTest {
     }
 
     @Test
+    @DisplayName("Duplicate Detection with null issueType: Searches all nearby candidates across categories")
+    void testCheckDuplicates_WithNullIssueType_SearchesAllCandidates() {
+        Complaint nearbyGarbage = Complaint.builder()
+                .id(99L)
+                .complaintNumber("CMP-99")
+                .status(ComplaintStatus.SUBMITTED)
+                .issueType(IssueType.GARBAGE)
+                .latitude(16.494390)
+                .longitude(80.498980)
+                .citizen(citizen)
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        when(complaintRepository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(nearbyGarbage));
+
+        CheckDuplicateRequest request = CheckDuplicateRequest.builder()
+                .issueType(null)
+                .latitude(16.494395)
+                .longitude(80.498981)
+                .build();
+
+        CheckDuplicateResponse response = complaintService.checkDuplicates(request, "9111111122");
+
+        assertNotNull(response);
+        assertTrue(response.isDuplicateFound());
+        assertEquals(1, response.getMatchCount());
+        assertEquals("CMP-99", response.getMatches().get(0).getComplaintNumber());
+        assertEquals(IssueType.GARBAGE, response.getMatches().get(0).getIssueType());
+    }
+
+    @Test
     @DisplayName("Test F: Join existing complaint - Participant count increases without creating another complaint")
     void testF_JoinComplaint_Success() {
         Complaint existing = Complaint.builder()

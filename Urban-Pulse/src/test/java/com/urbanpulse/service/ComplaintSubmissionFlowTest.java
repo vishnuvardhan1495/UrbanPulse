@@ -39,12 +39,12 @@ import static org.mockito.Mockito.*;
 
 /**
  * Comprehensive integration tests for citizen complaint submission flow.
- * Validates the 7 required scenarios:
- *  1. Valid image and confidence > 50%
- *  2. Valid image and confidence exactly 50%
- *  3. Valid image and confidence < 50%
- *  4. ML service unavailable
- *  5. No active department supervisor
+ * Validates the single-stage 8-class ML pipeline and confidence routing:
+ *  1. Valid image and confidence > 50% -> Department Supervisor (FORWARDED)
+ *  2. Valid image and confidence exactly 50% (0.50) -> Department Supervisor (FORWARDED)
+ *  3. Valid image and confidence < 50% -> Admin Review (PENDING_ADMIN_REVIEW)
+ *  4. ML service unavailable -> Admin Review (PENDING_ADMIN_REVIEW)
+ *  5. No active department supervisor -> Admin Review (PENDING_ADMIN_REVIEW)
  *  6. Invalid or corrupted image
  *  7. Existing duplicate complaint
  */
@@ -186,8 +186,8 @@ class ComplaintSubmissionFlowTest {
     }
 
     @Test
-    @DisplayName("Scenario 2: Valid image with confidence exactly 50% routes to Admin for manual review")
-    void testScenario2_ExactFiftyPercent_RoutesToAdmin() {
+    @DisplayName("Scenario 2: Valid image with confidence exactly 50% (0.50) forwards to department supervisor")
+    void testScenario2_ExactFiftyPercent_ForwardsToSupervisor() {
         CreateComplaintRequest request = CreateComplaintRequest.builder()
                 .imageUrl("/uploads/garbage_border.jpg")
                 .latitude(17.3850)
@@ -204,19 +204,21 @@ class ComplaintSubmissionFlowTest {
                 .modelVersion("urbanpulse_8class_pothole_stage1")
                 .build();
         when(mlInferenceService.predictImage(dummyBytes, "/uploads/garbage_border.jpg")).thenReturn(Optional.of(prediction));
+        when(departmentRepository.findByName("Sanitation Department")).thenReturn(Optional.of(sanitationDept));
+        when(userRepository.findByRoleAndDepartmentId(Role.SUPERVISOR, sanitationDept.getId())).thenReturn(List.of(sanitationSupervisor));
 
         ComplaintResponse response = complaintService.createComplaint(request, "+91 9000000001");
 
         assertNotNull(response);
-        assertEquals(ComplaintStatus.SUBMITTED, response.getStatus());
-        assertTrue(response.getRequiresManualReview());
-        assertEquals("MANUAL_REVIEW_LOW_CONFIDENCE", response.getAssignmentMethod());
-        assertTrue(response.getAdminReviewReason().contains("<= 50%"));
-        assertNull(response.getSupervisorMobile());
+        assertEquals(ComplaintStatus.FORWARDED, response.getStatus());
+        assertFalse(response.getRequiresManualReview());
+        assertEquals("AUTO_ML", response.getAssignmentMethod());
+        assertEquals("Sanitation Department", response.getDepartmentName());
+        assertEquals("+91 9000000002", response.getSupervisorMobile());
     }
 
     @Test
-    @DisplayName("Scenario 3: Valid image with confidence below 50% routes to Admin for manual review")
+    @DisplayName("Scenario 3: Valid image with confidence below 50% (e.g. 49.99% or 35%) routes to Admin Review")
     void testScenario3_LowConfidence_RoutesToAdmin() {
         CreateComplaintRequest request = CreateComplaintRequest.builder()
                 .imageUrl("/uploads/unclear.jpg")
@@ -237,9 +239,13 @@ class ComplaintSubmissionFlowTest {
         ComplaintResponse response = complaintService.createComplaint(request, "+91 9000000001");
 
         assertNotNull(response);
-        assertEquals(ComplaintStatus.SUBMITTED, response.getStatus());
+        assertEquals(ComplaintStatus.PENDING_ADMIN_REVIEW, response.getStatus());
         assertTrue(response.getRequiresManualReview());
         assertEquals("MANUAL_REVIEW_LOW_CONFIDENCE", response.getAssignmentMethod());
+        assertEquals("Garbage", response.getPredictedCategory());
+        assertEquals(0.35, response.getConfidenceScore());
+        assertNull(response.getDepartmentName());
+        assertNull(response.getSupervisorMobile());
     }
 
     @Test
@@ -258,14 +264,16 @@ class ComplaintSubmissionFlowTest {
         ComplaintResponse response = complaintService.createComplaint(request, "+91 9000000001");
 
         assertNotNull(response);
-        assertEquals(ComplaintStatus.SUBMITTED, response.getStatus());
+        assertEquals(ComplaintStatus.PENDING_ADMIN_REVIEW, response.getStatus());
         assertTrue(response.getRequiresManualReview());
         assertEquals("MANUAL_REVIEW_ML_FAILED", response.getAssignmentMethod());
+        assertNull(response.getDepartmentName());
+        assertNull(response.getSupervisorMobile());
     }
 
     @Test
-    @DisplayName("Scenario 5: No active department supervisor routes to Admin with department retained")
-    void testScenario5_NoSupervisor_RoutesToAdminWithDepartment() {
+    @DisplayName("Scenario 5: No active supervisor in department routes to Admin for review")
+    void testScenario5_NoActiveSupervisor_RoutesToAdmin() {
         CreateComplaintRequest request = CreateComplaintRequest.builder()
                 .imageUrl("/uploads/garbage.jpg")
                 .latitude(17.3850)
@@ -277,7 +285,7 @@ class ComplaintSubmissionFlowTest {
 
         MlPredictionResponse prediction = MlPredictionResponse.builder()
                 .predictedClass("Garbage")
-                .confidence(0.95)
+                .confidence(0.85)
                 .modelVersion("urbanpulse_8class_pothole_stage1")
                 .build();
         when(mlInferenceService.predictImage(dummyBytes, "/uploads/garbage.jpg")).thenReturn(Optional.of(prediction));
@@ -287,7 +295,7 @@ class ComplaintSubmissionFlowTest {
         ComplaintResponse response = complaintService.createComplaint(request, "+91 9000000001");
 
         assertNotNull(response);
-        assertEquals(ComplaintStatus.SUBMITTED, response.getStatus());
+        assertEquals(ComplaintStatus.PENDING_ADMIN_REVIEW, response.getStatus());
         assertTrue(response.getRequiresManualReview());
         assertEquals("MANUAL_REVIEW_NO_SUPERVISOR", response.getAssignmentMethod());
         assertEquals("Sanitation Department", response.getDepartmentName());
@@ -295,55 +303,58 @@ class ComplaintSubmissionFlowTest {
     }
 
     @Test
-    @DisplayName("Scenario 6: Invalid or unreadable image safely routes to Admin without failure")
-    void testScenario6_UnreadableImage_SafeAdminRoute() {
-        CreateComplaintRequest request = CreateComplaintRequest.builder()
-                .imageUrl("/uploads/corrupt.jpg")
+    @DisplayName("Scenario 6: Missing image or invalid coordinates throws 400 validation error")
+    void testScenario6_InvalidInput_ThrowsBadRequest() {
+        CreateComplaintRequest invalidCoords = CreateComplaintRequest.builder()
+                .imageUrl("/uploads/valid.jpg")
+                .latitude(95.0)
+                .longitude(78.4867)
+                .build();
+
+        assertThrows(IllegalArgumentException.class, () ->
+                complaintService.createComplaint(invalidCoords, "+91 9000000001"));
+
+        CreateComplaintRequest missingImage = CreateComplaintRequest.builder()
+                .imageUrl("   ")
                 .latitude(17.3850)
                 .longitude(78.4867)
                 .build();
 
-        when(fileStorageService.loadFileBytes("/uploads/corrupt.jpg")).thenReturn(null);
-
-        ComplaintResponse response = complaintService.createComplaint(request, "+91 9000000001");
-
-        assertNotNull(response);
-        assertEquals(ComplaintStatus.SUBMITTED, response.getStatus());
-        assertTrue(response.getRequiresManualReview());
-        assertEquals("MANUAL_REVIEW_ML_FAILED", response.getAssignmentMethod());
+        assertThrows(IllegalArgumentException.class, () ->
+                complaintService.createComplaint(missingImage, "+91 9000000001"));
     }
 
     @Test
-    @DisplayName("Scenario 7: Duplicate detection identifies existing complaint within 30m radius")
-    void testScenario7_DuplicateDetection_FindsMatchingComplaint() {
+    @DisplayName("Scenario 7: Duplicate detection within 30m radius")
+    void testScenario7_DuplicateComplaintDetection() {
         Complaint existingComplaint = Complaint.builder()
-                .id(200L)
-                .complaintNumber("CMP-200")
-                .status(ComplaintStatus.SUBMITTED)
+                .id(50L)
+                .complaintNumber("CMP-EXISTING-01")
+                .status(ComplaintStatus.FORWARDED)
                 .issueType(IssueType.POTHOLE)
-                .latitude(17.3850)
-                .longitude(78.4867)
-                .imageUrl("/uploads/existing_pothole.jpg")
-                .createdAt(LocalDateTime.now().minusHours(1))
+                .latitude(17.385000)
+                .longitude(78.486700)
+                .imageUrl("/uploads/existing.jpg")
                 .citizen(citizen)
+                .department(sanitationDept)
+                .createdAt(LocalDateTime.now().minusHours(2))
                 .build();
 
-        when(complaintRepository.findByIssueTypeOrderByCreatedAtDesc(IssueType.POTHOLE)).thenReturn(List.of(existingComplaint));
+        when(complaintRepository.findAllByOrderByCreatedAtDesc())
+                .thenReturn(List.of(existingComplaint));
 
         CheckDuplicateRequest checkRequest = CheckDuplicateRequest.builder()
-                .latitude(17.38505) // ~5.5 meters away
-                .longitude(78.4867)
-                .issueType(IssueType.POTHOLE)
-                .imageUrl("/uploads/new_pothole.jpg")
+                .latitude(17.385050)
+                .longitude(78.486750)
                 .radiusMeters(30.0)
                 .build();
 
-        CheckDuplicateResponse duplicateResponse = complaintService.checkDuplicates(checkRequest, "+91 9000000001");
+        CheckDuplicateResponse checkResponse = complaintService.checkDuplicates(checkRequest, "+91 9000000001");
 
-        assertNotNull(duplicateResponse);
-        assertTrue(duplicateResponse.isDuplicateFound());
-        assertEquals(1, duplicateResponse.getMatchCount());
-        assertEquals("CMP-200", duplicateResponse.getMatches().get(0).getComplaintNumber());
-        assertTrue(duplicateResponse.getMatches().get(0).getDistanceMeters() < 30.0);
+        assertNotNull(checkResponse);
+        assertTrue(checkResponse.isDuplicateFound());
+        assertEquals(1, checkResponse.getMatchCount());
+        assertEquals(1, checkResponse.getMatches().size());
+        assertEquals("CMP-EXISTING-01", checkResponse.getMatches().get(0).getComplaintNumber());
     }
 }

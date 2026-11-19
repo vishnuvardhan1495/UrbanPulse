@@ -13,7 +13,6 @@ import lombok.NoArgsConstructor;
 @Builder
 public class CheckDuplicateRequest {
 
-    @NotNull(message = "Issue type is required")
     private IssueType issueType;
 
     @NotNull(message = "Latitude is required")

@@ -96,7 +96,7 @@ export interface DuplicateComplaintSummary {
 }
 
 export interface CheckDuplicatePayload {
-  issueType: string;
+  issueType?: string;
   latitude: number;
   longitude: number;
   imageUrl?: string;

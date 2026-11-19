@@ -85,7 +85,6 @@ export default function App() {
   const [gpsLocation, setGpsLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [gpsLoading, setGpsLoading] = useState(false);
   const [gpsError, setGpsError] = useState<string | null>(null);
-  const [issueType, setIssueType] = useState<string>('POTHOLE');
   const [submitting, setSubmitting] = useState(false);
   const [lastSubmittedComplaint, setLastSubmittedComplaint] = useState<ComplaintData | null>(null);
 
@@ -684,7 +683,6 @@ export default function App() {
   );
 
   const isSubmitReady = Boolean(
-    issueType &&
     capturedPhotoUri &&
     hasValidCoords &&
     !submitting
@@ -692,7 +690,6 @@ export default function App() {
 
   const getSubmitDisabledReason = (): string | null => {
     if (submitting) return null;
-    if (!issueType) return 'Please select an issue category.';
     if (!capturedPhotoUri) return 'Capture a photo and get your GPS location before submitting.';
     if (!hasValidCoords) {
       if (gpsLoading) return 'Getting your real GPS location...';
@@ -704,14 +701,11 @@ export default function App() {
   /**
    * Submits complaint with live photo + real GPS only.
    * NO description field is included.
+   * Issue category is determined automatically by ML model.
    */
   const handleSubmitComplaint = async () => {
     if (!firebaseIdToken) {
       setErrorMessage('Authentication session expired. Please re-login.');
-      return;
-    }
-    if (!issueType) {
-      setErrorMessage('Please select an issue category.');
       return;
     }
     if (!capturedPhotoUri) {
@@ -735,12 +729,11 @@ export default function App() {
       const uploadedImageUrl = await uploadImage(firebaseIdToken, capturedPhotoUri);
       console.log('[COMPLAINT] Image upload successful. Path:', uploadedImageUrl);
 
-      // Step 2: Submit complaint to /api/complaints (no description field)
+      // Step 2: Submit complaint to /api/complaints (category determined through ML)
       const payload: CreateComplaintPayload = {
         imageUrl: uploadedImageUrl,
         latitude: gpsLocation.lat,
         longitude: gpsLocation.lng,
-        issueType: issueType,
         severity: 'MEDIUM',
       };
 
@@ -749,7 +742,6 @@ export default function App() {
       setCheckingDuplicates(true);
 
       const duplicateCheck = await checkDuplicateComplaints(firebaseIdToken, {
-        issueType: payload.issueType || 'POTHOLE',
         latitude: payload.latitude,
         longitude: payload.longitude,
         imageUrl: payload.imageUrl,
@@ -767,7 +759,6 @@ export default function App() {
 
       // Step 3: No duplicate found - proceed directly to normal creation
       console.log('[COMPLAINT] No duplicate found. Creating complaint with safe payload:', {
-        issueType: payload.issueType,
         latitude: payload.latitude,
         longitude: payload.longitude,
         imageUrl: payload.imageUrl,
@@ -955,7 +946,7 @@ export default function App() {
             <View style={{ flex: 1 }}>
               <Text style={styles.similarBannerTitle}>Similar Complaints Found</Text>
               <Text style={styles.similarBannerSub}>
-                We detected {similarComplaints.length} existing civic complaint{similarComplaints.length > 1 ? 's' : ''} reported within 30m matching this issue category ({issueType}).
+                We detected {similarComplaints.length} existing civic complaint{similarComplaints.length > 1 ? 's' : ''} reported within 30m.
               </Text>
             </View>
           </View>
@@ -1111,7 +1102,9 @@ export default function App() {
     }
 
     if (lastSubmittedComplaint) {
-      const isNonCivicPending = lastSubmittedComplaint.isCivicIssue === false;
+      const isLowConfidenceReview = lastSubmittedComplaint.status === 'PENDING_ADMIN_REVIEW' ||
+        Boolean(lastSubmittedComplaint.requiresManualReview) ||
+        (lastSubmittedComplaint.confidenceScore != null && lastSubmittedComplaint.confidenceScore < 0.50);
       return (
         <View style={styles.successCard}>
           <Text style={styles.successCheckIcon}>✓</Text>
@@ -1119,15 +1112,24 @@ export default function App() {
           <Text style={styles.complaintNumBox}>
             Complaint #: {lastSubmittedComplaint.complaintNumber}
           </Text>
-          {isNonCivicPending ? (
+          {isLowConfidenceReview ? (
             <Text style={styles.successDesc}>
-              Your complaint has been submitted successfully and forwarded to the Admin for manual review.
+              Your complaint has been submitted successfully and forwarded for{' '}
+              <Text style={{ color: '#F59E0B', fontWeight: '700' }}>Admin Review</Text>
+              {lastSubmittedComplaint.confidenceScore != null
+                ? ` (Model Confidence: ${(lastSubmittedComplaint.confidenceScore * 100).toFixed(1)}% < 50%)`
+                : ''}.
             </Text>
           ) : (
             <Text style={styles.successDesc}>
-              Your issue has been logged in PostgreSQL with status{' '}
-              <Text style={{ color: '#F59E0B', fontWeight: '700' }}>SUBMITTED</Text>. SLA deadline is{' '}
-              {lastSubmittedComplaint.slaDeadline ? new Date(lastSubmittedComplaint.slaDeadline).toLocaleString() : 'set'}.
+              Your complaint has been classified as{' '}
+              <Text style={{ color: '#38BDF8', fontWeight: '700' }}>
+                {lastSubmittedComplaint.predictedCategory || lastSubmittedComplaint.issueType}
+              </Text>
+              {lastSubmittedComplaint.departmentName ? ` and routed to ${lastSubmittedComplaint.departmentName}` : ''}
+              {lastSubmittedComplaint.confidenceScore != null
+                ? ` (${(lastSubmittedComplaint.confidenceScore * 100).toFixed(1)}% confidence)`
+                : ''}.
             </Text>
           )}
 
@@ -1158,37 +1160,8 @@ export default function App() {
           Live rear camera photo & real GPS location (No description required)
         </Text>
 
-        {/* Step 1: Issue Category Selection */}
-        <Text style={styles.inputLabel}>1. Select Issue Category</Text>
-        <View style={styles.typeGrid}>
-          {[
-            { key: 'POTHOLE', label: '🕳️ Pothole (24h)' },
-            { key: 'GARBAGE', label: '🗑️ Garbage (12h)' },
-            { key: 'WATER_LEAK', label: '💧 Water Leak (6h)' },
-            { key: 'DRAINAGE_ISSUE', label: '🚰 Drainage (12h)' },
-            { key: 'STREET_LIGHT_DAMAGE', label: '💡 Street Light (24h)' },
-            { key: 'INFRASTRUCTURE_DAMAGE', label: '🏗️ Infrastructure (48h)' },
-          ].map((item) => (
-            <TouchableOpacity
-              key={item.key}
-              style={[
-                styles.typeChip,
-                issueType === item.key && styles.typeChipSelected,
-              ]}
-              onPress={() => setIssueType(item.key)}>
-              <Text
-                style={[
-                  styles.typeChipText,
-                  issueType === item.key && styles.typeChipTextSelected,
-                ]}>
-                {item.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* Step 2: Live Camera Capture */}
-        <Text style={[styles.inputLabel, { marginTop: 18 }]}>2. Live Camera Photo</Text>
+        {/* Step 1: Live Camera Capture */}
+        <Text style={styles.inputLabel}>1. Live Camera Photo</Text>
         {!capturedPhotoUri ? (
           <TouchableOpacity
             style={styles.cameraTriggerBtn}
@@ -1217,10 +1190,10 @@ export default function App() {
           </View>
         )}
 
-        {/* Step 3: Real Device GPS Location */}
+        {/* Step 2: Real Device GPS Location */}
         {capturedPhotoUri && (
           <View style={{ marginTop: 18 }}>
-            <Text style={styles.inputLabel}>3. Real GPS Location Coordinates</Text>
+            <Text style={styles.inputLabel}>2. Real GPS Location Coordinates</Text>
             {gpsLoading ? (
               <View style={styles.gpsBoxLoading}>
                 <ActivityIndicator size="small" color="#38BDF8" />
@@ -2295,31 +2268,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#CBD5E1',
     marginBottom: 8,
-  },
-  typeGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  typeChip: {
-    backgroundColor: '#1E293B',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  typeChipSelected: {
-    backgroundColor: '#0284C733',
-    borderColor: '#38BDF8',
-  },
-  typeChipText: {
-    color: '#94A3B8',
-    fontSize: 12,
-  },
-  typeChipTextSelected: {
-    color: '#38BDF8',
-    fontWeight: '700',
   },
   cameraTriggerBtn: {
     backgroundColor: '#1E293B',

@@ -10,6 +10,9 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * DTO representing the response from the 8-class ML image classification service.
+ */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -17,23 +20,27 @@ import java.util.Map;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class MlPredictionResponse {
 
-    // Original fields from single‑stage model
     private String predictedClass;
     private Double confidence;
     private Object probabilities;
     private Map<String, Double> classProbabilities;
     private String modelVersion;
     private String error;
-
-    // New fields for two‑stage pipeline
-    private Boolean isCivicIssue;
-    private String binaryPrediction;
-    private Double notCivicProbability;
-    private Double civicProbability;
     private Boolean success;
-    private String classificationStatus;
-    private String stage;
 
+    // Deprecated legacy fields retained for backward-compatible serialization
+    @Deprecated
+    private Boolean isCivicIssue;
+    @Deprecated
+    private String binaryPrediction;
+    @Deprecated
+    private Double notCivicProbability;
+    @Deprecated
+    private Double civicProbability;
+    @Deprecated
+    private String classificationStatus;
+    @Deprecated
+    private String stage;
 
     @SuppressWarnings("unchecked")
     public List<Double> getProbabilitiesAsList() {

@@ -25,10 +25,10 @@ const CATEGORY_TO_DEPARTMENT = {
   'Damaged Concrete Structures': 'Engineering Department',
   'Damaged Electrical Poles': 'Electrical Department',
   'Damaged Road Signs': 'Road Safety Department',
-  'Dead Animals Pollution': 'Public Health & Sanitation Department',
-  'Fallen Trees': 'Parks & Horticulture Department',
+  'Dead Animals Pollution': 'Public Health Department',
+  'Fallen Trees': 'Horticulture Department',
   'Garbage': 'Sanitation Department',
-  'Illegal Parking': 'Traffic & Parking Enforcement',
+  'Illegal Parking': 'Traffic Department',
   'Potholes and Road Cracks': 'Road Safety Department',
 };
 
@@ -50,8 +50,8 @@ export default function AdminView({ idToken, user }) {
   const [issueTypeFilter, setIssueTypeFilter] = useState('ALL');
   const [reviewFilter, setReviewFilter] = useState('ALL'); // 'ALL' | 'REVIEW_ONLY'
 
-  // Filter for Non-Civic Review section
-  const [nonCivicFilter, setNonCivicFilter] = useState('PENDING'); // 'PENDING' | 'APPROVED' | 'REJECTED' | 'ALL'
+  // Filter for Low-Confidence Review section
+  const [reviewTabFilter, setReviewTabFilter] = useState('PENDING'); // 'PENDING' | 'APPROVED' | 'REJECTED' | 'ALL'
 
   // Manual review modal state (general/legacy)
   const [reviewModalComplaint, setReviewModalComplaint] = useState(null);
@@ -319,7 +319,10 @@ export default function AdminView({ idToken, user }) {
   // Compute Task Summaries
   const totalCount = complaints.length;
   const manualReviewCount = complaints.filter(c => c.requiresManualReview).length;
-  const pendingNonCivicCount = complaints.filter(c => c.isCivicIssue === false && (c.status === 'PENDING_ADMIN_REVIEW' || c.status === 'SUBMITTED' || c.reviewStatus === 'PENDING_ADMIN_REVIEW')).length;
+  const pendingLowConfidenceCount = complaints.filter(c =>
+    (c.status === 'PENDING_ADMIN_REVIEW' || c.reviewStatus === 'PENDING_ADMIN_REVIEW' || Boolean(c.requiresManualReview) || (c.confidenceScore != null && c.confidenceScore < 0.50)) &&
+    c.status !== 'FORWARDED' && c.status !== 'REJECTED'
+  ).length;
   const submittedCount = complaints.filter(c => c.status === 'SUBMITTED').length;
   const forwardedCount = complaints.filter(c => c.status === 'FORWARDED').length;
   const assignedCount = complaints.filter(c => c.status === 'ASSIGNED').length;
@@ -342,17 +345,24 @@ export default function AdminView({ idToken, user }) {
     return true;
   });
 
-  // Non-civic complaints list for dedicated section
-  const nonCivicComplaints = complaints.filter(c => {
-    const isNonCivic = c.isCivicIssue === false || c.status === 'PENDING_ADMIN_REVIEW' || c.reviewStatus === 'PENDING_ADMIN_REVIEW';
-    if (!isNonCivic) return false;
-    if (nonCivicFilter === 'PENDING') {
-      return c.status === 'PENDING_ADMIN_REVIEW' || c.reviewStatus === 'PENDING_ADMIN_REVIEW' || (c.status === 'SUBMITTED' && c.requiresManualReview);
+  // Low-confidence complaints list for Admin Review section (< 50% threshold)
+  const lowConfidenceComplaints = complaints.filter(c => {
+    const isUnderReview = c.status === 'PENDING_ADMIN_REVIEW' ||
+      c.reviewStatus === 'PENDING_ADMIN_REVIEW' ||
+      Boolean(c.requiresManualReview) ||
+      (c.confidenceScore != null && c.confidenceScore < 0.50) ||
+      c.reviewStatus === 'ADMIN_APPROVED' ||
+      c.reviewStatus === 'ADMIN_REJECTED';
+
+    if (!isUnderReview) return false;
+    if (reviewTabFilter === 'PENDING') {
+      return (c.status === 'PENDING_ADMIN_REVIEW' || c.reviewStatus === 'PENDING_ADMIN_REVIEW' || Boolean(c.requiresManualReview) || (c.confidenceScore != null && c.confidenceScore < 0.50)) &&
+        c.status !== 'FORWARDED' && c.status !== 'REJECTED';
     }
-    if (nonCivicFilter === 'APPROVED') {
-      return c.reviewStatus === 'ADMIN_APPROVED' || c.classificationSource === 'ADMIN_VERIFIED';
+    if (reviewTabFilter === 'APPROVED') {
+      return c.reviewStatus === 'ADMIN_APPROVED' || c.assignmentMethod === 'ADMIN_MANUAL_APPROVAL' || c.classificationSource === 'ADMIN_VERIFIED';
     }
-    if (nonCivicFilter === 'REJECTED') {
+    if (reviewTabFilter === 'REJECTED') {
       return c.status === 'REJECTED' || c.reviewStatus === 'ADMIN_REJECTED';
     }
     return true;
@@ -487,8 +497,8 @@ export default function AdminView({ idToken, user }) {
             gap: '8px',
           }}
         >
-          🛡️ Non-Civic Complaints - Admin Review
-          {pendingNonCivicCount > 0 && (
+          🛡️ Low-Confidence Complaints - Admin Review Queue
+          {pendingLowConfidenceCount > 0 && (
             <span style={{
               backgroundColor: '#EF4444',
               color: '#FFFFFF',
@@ -497,7 +507,7 @@ export default function AdminView({ idToken, user }) {
               fontSize: '11px',
               fontWeight: '800'
             }}>
-              {pendingNonCivicCount} Pending
+              {pendingLowConfidenceCount} Pending
             </span>
           )}
         </button>
@@ -649,7 +659,7 @@ export default function AdminView({ idToken, user }) {
                 const inProgressAt = item.statusHistory?.find(h => h.newStatus === 'IN_PROGRESS')?.changedAt;
                 const resolvedAt = item.resolvedAt || item.statusHistory?.find(h => h.newStatus === 'RESOLVED')?.changedAt;
 
-                const isNonCivic = item.isCivicIssue === false || item.status === 'PENDING_ADMIN_REVIEW' || item.reviewStatus === 'PENDING_ADMIN_REVIEW';
+                const isLowConfidence = item.status === 'PENDING_ADMIN_REVIEW' || item.reviewStatus === 'PENDING_ADMIN_REVIEW' || Boolean(item.requiresManualReview) || (item.confidenceScore != null && item.confidenceScore < 0.50);
 
                 return (
                   <div key={item.id} className="glass-card" style={{
@@ -657,20 +667,15 @@ export default function AdminView({ idToken, user }) {
                     display: 'flex',
                     flexDirection: 'column',
                     justifyContent: 'space-between',
-                    border: isNonCivic ? '1px solid rgba(245, 158, 11, 0.4)' : undefined,
+                    border: isLowConfidence ? '1px solid rgba(245, 158, 11, 0.4)' : undefined,
                   }}>
                     <div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                         <span style={{ fontSize: '17px', fontWeight: '800', color: '#F8FAFC' }}>{item.complaintNumber}</span>
                         <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
-                          {isNonCivic && (
+                          {isLowConfidence && (
                             <span style={{ backgroundColor: '#78350F', border: '1px solid #F59E0B', color: '#FDE68A', fontSize: '11px', fontWeight: '700', padding: '2px 8px', borderRadius: '12px' }}>
-                              🛡️ Non-Civic Review
-                            </span>
-                          )}
-                          {item.requiresManualReview && !isNonCivic && (
-                            <span style={{ backgroundColor: '#78350F', border: '1px solid #F59E0B', color: '#FDE68A', fontSize: '11px', fontWeight: '700', padding: '2px 8px', borderRadius: '12px' }}>
-                              ⚠️ Review Needed
+                              🛡️ Low Confidence (&lt; 50%)
                             </span>
                           )}
                           <span className={`badge badge-${item.status.toLowerCase()}`}>{item.status}</span>
@@ -710,8 +715,8 @@ export default function AdminView({ idToken, user }) {
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
                           <div>
                             <strong>AI Triage: </strong>
-                            <span style={{ color: item.isCivicIssue === false ? '#F59E0B' : '#38BDF8', fontWeight: '700' }}>
-                              {item.isCivicIssue === false ? 'Stage 1: Non-Civic Issue' : (item.predictedCategory || 'Not Analyzed')}
+                            <span style={{ color: '#38BDF8', fontWeight: '700' }}>
+                              {item.predictedCategory || item.issueType || 'Not Analyzed'}
                             </span>
                           </div>
                           <div>
@@ -770,7 +775,7 @@ export default function AdminView({ idToken, user }) {
                     </div>
 
                     <div>
-                      {isNonCivic && (item.status === 'PENDING_ADMIN_REVIEW' || item.status === 'SUBMITTED') ? (
+                      {isLowConfidence && (item.status === 'PENDING_ADMIN_REVIEW' || item.status === 'SUBMITTED') ? (
                         <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
                           <button
                             onClick={() => openApproveModal(item)}
@@ -786,7 +791,7 @@ export default function AdminView({ idToken, user }) {
                               cursor: 'pointer',
                             }}
                           >
-                            ✅ Approve as Civic
+                            ✅ Approve & Assign
                           </button>
                           <button
                             onClick={() => openRejectModal(item)}
@@ -832,7 +837,7 @@ export default function AdminView({ idToken, user }) {
                         📜 View Complete Timeline ({item.statusHistory?.length || 0} events)
                       </button>
 
-                      {item.status === 'SUBMITTED' && !isNonCivic && (
+                      {item.status === 'SUBMITTED' && !isLowConfidence && (
                         <div style={{ borderTop: '1px solid #334155', paddingTop: '10px' }}>
                           <label style={{ fontSize: '11px', fontWeight: '600', color: '#94A3B8', display: 'block', marginBottom: '4px' }}>
                             Forward to Department:
@@ -868,75 +873,75 @@ export default function AdminView({ idToken, user }) {
           )}
         </>
       ) : (
-        /* DEDICATED SECTION: NON-CIVIC COMPLAINTS - ADMIN REVIEW */
+        /* DEDICATED SECTION: LOW-CONFIDENCE COMPLAINTS - ADMIN REVIEW */
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
             <div>
               <h3 style={{ fontSize: '18px', fontWeight: '800', color: '#FBBF24' }}>
-                🛡️ Non-Civic Complaints - Admin Review Triage Queue
+                🛡️ Low-Confidence Complaints - Admin Review Triage Queue
               </h3>
               <p style={{ fontSize: '13px', color: '#94A3B8' }}>
-                Images flagged as non-civic by Stage 1 Binary Gatekeeper. Admin must manually approve into one of 8 civic categories or reject with remarks.
+                Complaints with ML prediction confidence &lt; 50% or requiring manual triage. Admin must manually verify and assign to a department supervisor or reject.
               </p>
             </div>
 
             <div style={{ display: 'flex', gap: '8px' }}>
               <button
-                onClick={() => setNonCivicFilter('PENDING')}
+                onClick={() => setReviewTabFilter('PENDING')}
                 style={{
                   padding: '6px 14px',
                   borderRadius: '6px',
                   fontSize: '12px',
                   fontWeight: '700',
                   cursor: 'pointer',
-                  border: nonCivicFilter === 'PENDING' ? '1px solid #F59E0B' : '1px solid #334155',
-                  backgroundColor: nonCivicFilter === 'PENDING' ? '#78350F' : '#0F172A',
-                  color: nonCivicFilter === 'PENDING' ? '#FDE68A' : '#94A3B8'
+                  border: reviewTabFilter === 'PENDING' ? '1px solid #F59E0B' : '1px solid #334155',
+                  backgroundColor: reviewTabFilter === 'PENDING' ? '#78350F' : '#0F172A',
+                  color: reviewTabFilter === 'PENDING' ? '#FDE68A' : '#94A3B8'
                 }}
               >
-                ⚠️ Pending Review ({complaints.filter(c => (c.isCivicIssue === false || c.status === 'PENDING_ADMIN_REVIEW') && c.status !== 'FORWARDED' && c.status !== 'REJECTED').length})
+                ⚠️ Pending Review ({pendingLowConfidenceCount})
               </button>
               <button
-                onClick={() => setNonCivicFilter('APPROVED')}
+                onClick={() => setReviewTabFilter('APPROVED')}
                 style={{
                   padding: '6px 14px',
                   borderRadius: '6px',
                   fontSize: '12px',
                   fontWeight: '700',
                   cursor: 'pointer',
-                  border: nonCivicFilter === 'APPROVED' ? '1px solid #10B981' : '1px solid #334155',
-                  backgroundColor: nonCivicFilter === 'APPROVED' ? '#065F46' : '#0F172A',
-                  color: nonCivicFilter === 'APPROVED' ? '#A7F3D0' : '#94A3B8'
+                  border: reviewTabFilter === 'APPROVED' ? '1px solid #10B981' : '1px solid #334155',
+                  backgroundColor: reviewTabFilter === 'APPROVED' ? '#065F46' : '#0F172A',
+                  color: reviewTabFilter === 'APPROVED' ? '#A7F3D0' : '#94A3B8'
                 }}
               >
                 ✅ Approved by Admin
               </button>
               <button
-                onClick={() => setNonCivicFilter('REJECTED')}
+                onClick={() => setReviewTabFilter('REJECTED')}
                 style={{
                   padding: '6px 14px',
                   borderRadius: '6px',
                   fontSize: '12px',
                   fontWeight: '700',
                   cursor: 'pointer',
-                  border: nonCivicFilter === 'REJECTED' ? '1px solid #EF4444' : '1px solid #334155',
-                  backgroundColor: nonCivicFilter === 'REJECTED' ? '#7F1D1D' : '#0F172A',
-                  color: nonCivicFilter === 'REJECTED' ? '#FCA5A5' : '#94A3B8'
+                  border: reviewTabFilter === 'REJECTED' ? '1px solid #EF4444' : '1px solid #334155',
+                  backgroundColor: reviewTabFilter === 'REJECTED' ? '#7F1D1D' : '#0F172A',
+                  color: reviewTabFilter === 'REJECTED' ? '#FCA5A5' : '#94A3B8'
                 }}
               >
                 ❌ Rejected
               </button>
               <button
-                onClick={() => setNonCivicFilter('ALL')}
+                onClick={() => setReviewTabFilter('ALL')}
                 style={{
                   padding: '6px 14px',
                   borderRadius: '6px',
                   fontSize: '12px',
                   fontWeight: '700',
                   cursor: 'pointer',
-                  border: nonCivicFilter === 'ALL' ? '1px solid #38BDF8' : '1px solid #334155',
-                  backgroundColor: nonCivicFilter === 'ALL' ? '#0369A1' : '#0F172A',
-                  color: nonCivicFilter === 'ALL' ? '#BAE6FD' : '#94A3B8'
+                  border: reviewTabFilter === 'ALL' ? '1px solid #38BDF8' : '1px solid #334155',
+                  backgroundColor: reviewTabFilter === 'ALL' ? '#0369A1' : '#0F172A',
+                  color: reviewTabFilter === 'ALL' ? '#BAE6FD' : '#94A3B8'
                 }}
               >
                 All Records
@@ -945,15 +950,18 @@ export default function AdminView({ idToken, user }) {
           </div>
 
           {loading ? (
-            <div style={{ textAlign: 'center', padding: '40px', color: '#94A3B8' }}>Loading Non-Civic Review Queue...</div>
-          ) : nonCivicComplaints.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '40px', color: '#94A3B8' }}>Loading Low-Confidence Review Queue...</div>
+          ) : lowConfidenceComplaints.length === 0 ? (
             <div className="glass-card" style={{ padding: '40px', textAlign: 'center', color: '#94A3B8' }}>
-              No complaints in this non-civic review filter.
+              No complaints in this review filter.
             </div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: '20px' }}>
-              {nonCivicComplaints.map((item) => {
-                const isPendingAction = item.status === 'PENDING_ADMIN_REVIEW' || (item.isCivicIssue === false && item.status !== 'FORWARDED' && item.status !== 'REJECTED');
+              {lowConfidenceComplaints.map((item) => {
+                const isPendingAction = item.status === 'PENDING_ADMIN_REVIEW' ||
+                  item.reviewStatus === 'PENDING_ADMIN_REVIEW' ||
+                  Boolean(item.requiresManualReview) ||
+                  (item.confidenceScore != null && item.confidenceScore < 0.50 && item.status !== 'FORWARDED' && item.status !== 'REJECTED');
 
                 return (
                   <div key={item.id} className="glass-card" style={{
@@ -985,24 +993,27 @@ export default function AdminView({ idToken, user }) {
                       <div style={{ height: '180px', borderRadius: '8px', overflow: 'hidden', backgroundColor: '#0B132B', marginBottom: '14px', border: '1px solid #334155' }}>
                         <img
                           src={item.imageUrl.startsWith('/') ? `http://localhost:8080${item.imageUrl}` : item.imageUrl}
-                          alt="Non-Civic Submission"
+                          alt="Complaint Submission"
                           style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                         />
                       </div>
 
-                      {/* Stage 1 Binary Diagnosis Box */}
+                      {/* 8-Class Model Diagnosis Box */}
                       <div style={{ backgroundColor: 'rgba(245, 158, 11, 0.1)', border: '1px solid #F59E0B66', padding: '10px 12px', borderRadius: '6px', marginBottom: '14px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
                           <span style={{ fontSize: '12px', fontWeight: '700', color: '#FBBF24' }}>
-                            🔍 Stage 1 Binary Gatekeeper:
+                            🎯 8-Class Model Diagnosis:
                           </span>
                           <span style={{ fontSize: '11px', fontWeight: '800', color: '#F87171' }}>
-                            NOT_CIVIC_ISSUE
+                            {item.confidenceScore != null && item.confidenceScore < 0.50 ? 'LOW CONFIDENCE (< 50%)' : (item.status === 'PENDING_ADMIN_REVIEW' ? 'PENDING REVIEW' : 'MANUAL TRIAGE')}
                           </span>
                         </div>
                         <div style={{ fontSize: '11px', color: '#CBD5E1' }}>
-                          Non-Civic Probability: <strong>{item.notCivicProbability != null ? (item.notCivicProbability * 100).toFixed(1) + '%' : 'N/A'}</strong>
-                          {item.civicProbability != null && ` | Civic: ${(item.civicProbability * 100).toFixed(1)}%`}
+                          Predicted: <strong style={{ color: '#38BDF8' }}>{item.predictedCategory || 'Unknown'}</strong>
+                          {' | '}Confidence: <strong style={{ color: item.confidenceScore != null && item.confidenceScore < 0.50 ? '#F87171' : '#34D399' }}>
+                            {item.confidenceScore != null ? (item.confidenceScore * 100).toFixed(2) + '%' : 'N/A'}
+                          </strong>
+                          <span style={{ color: '#94A3B8', marginLeft: '6px' }}>(Threshold: 50.0%)</span>
                         </div>
                         {item.adminReviewReason && (
                           <div style={{ fontSize: '11px', color: '#FDE68A', marginTop: '6px' }}>
@@ -1068,7 +1079,7 @@ export default function AdminView({ idToken, user }) {
                               cursor: 'pointer',
                             }}
                           >
-                            ✅ Approve as Civic
+                            ✅ Approve & Assign
                           </button>
                           <button
                             onClick={() => openRejectModal(item)}
@@ -1109,13 +1120,13 @@ export default function AdminView({ idToken, user }) {
         </div>
       )}
 
-      {/* Action A: Approve Non-Civic Complaint Modal */}
+      {/* Action A: Approve Low-Confidence Complaint Modal */}
       {approveModalComplaint && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '20px' }}>
           <div className="glass-card" style={{ width: '100%', maxWidth: '580px', padding: '24px', maxHeight: '85vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <h3 style={{ fontSize: '18px', fontWeight: '800', color: '#34D399' }}>
-                ✅ Approve Non-Civic Complaint: {approveModalComplaint.complaintNumber}
+                ✅ Approve & Route Complaint: {approveModalComplaint.complaintNumber}
               </h3>
               <button
                 onClick={() => setApproveModalComplaint(null)}
@@ -1135,12 +1146,13 @@ export default function AdminView({ idToken, user }) {
               </div>
               <div style={{ fontSize: '12px', color: '#CBD5E1', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 <div><strong>Citizen:</strong> {approveModalComplaint.citizenMobile}</div>
-                <div><strong>Stage 1 Result:</strong> <span style={{ color: '#F87171', fontWeight: '700' }}>NOT_CIVIC_ISSUE</span></div>
+                <div><strong>Predicted Category:</strong> <span style={{ color: '#38BDF8', fontWeight: '700' }}>{approveModalComplaint.predictedCategory || 'N/A'}</span></div>
                 <div>
-                  <strong>Non-Civic Confidence: </strong>
+                  <strong>Prediction Confidence: </strong>
                   <span style={{ color: '#F59E0B', fontWeight: '700' }}>
-                    {approveModalComplaint.notCivicProbability != null ? (approveModalComplaint.notCivicProbability * 100).toFixed(1) + '%' : 'N/A'}
+                    {approveModalComplaint.confidenceScore != null ? (approveModalComplaint.confidenceScore * 100).toFixed(2) + '%' : 'N/A'}
                   </span>
+                  <span style={{ color: '#94A3B8', marginLeft: '4px' }}>(&lt; 50% Threshold)</span>
                 </div>
                 <div><strong>Location:</strong> 📍 Lat {approveModalComplaint.latitude}, Lng {approveModalComplaint.longitude}</div>
               </div>
@@ -1222,13 +1234,13 @@ export default function AdminView({ idToken, user }) {
         </div>
       )}
 
-      {/* Action B: Reject Non-Civic Complaint Modal */}
+      {/* Action B: Reject Low-Confidence Complaint Modal */}
       {rejectModalComplaint && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '20px' }}>
           <div className="glass-card" style={{ width: '100%', maxWidth: '520px', padding: '24px', maxHeight: '85vh', overflowY: 'auto', border: '1px solid #EF4444' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <h3 style={{ fontSize: '18px', fontWeight: '800', color: '#F87171' }}>
-                ❌ Reject Non-Civic Complaint: {rejectModalComplaint.complaintNumber}
+                ❌ Reject Complaint: {rejectModalComplaint.complaintNumber}
               </h3>
               <button
                 onClick={() => setRejectModalComplaint(null)}
@@ -1247,7 +1259,7 @@ export default function AdminView({ idToken, user }) {
                   type="text"
                   className="input-field"
                   style={{ width: '100%', borderColor: '#EF4444' }}
-                  placeholder="e.g. Non-civic image: Personal photo, document, or spam"
+                  placeholder="e.g. Unclear image, spam, or invalid civic complaint"
                   value={rejectForm.rejectionReason}
                   onChange={(e) => setRejectForm({ ...rejectForm, rejectionReason: e.target.value })}
                   required
